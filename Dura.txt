@@ -1,0 +1,499 @@
+Option Explicit
+
+'==================================================================
+'  DURACIÓN FONDO 0  -  v4
+'  - Sin cupón (está en el vector): YTW/Spread/Duración del vector.
+'  - Con cupón (NO está en el vector): Duración = interpolación
+'    lineal contra hoja "CP Duracion" (días C3:C8, duración D3:D8),
+'    usando días = hoy -> vencimiento. YTM y Spread quedan en blanco.
+'  - Hojas: Config, CP Duracion (inputs, no se borran);
+'    SBS, Base F0, Calculo F0, Cupón F0 (se reemplazan).
+'  - Duración fondo = Σ(Monto×Duración)/Σ(Monto).
+'==================================================================
+
+' --- Cartera (FMS) ---
+Private Const C_FOND As Long = 1, C_ASSET As Long = 3, C_SBS As Long = 4
+Private Const C_EMISOR As Long = 5, C_NEMO As Long = 7, C_MONEDA As Long = 8
+Private Const C_CANT As Long = 9, C_RATING As Long = 11, C_VCTO As Long = 12
+' --- Anexo I ---
+Private Const A_FOND As Long = 1, A_DESC As Long = 4, A_MONTO As Long = 6
+' --- Vector SBS ---
+Private Const V_CODE As Long = 1, V_YTW As Long = 14, V_SPR As Long = 15, V_DUR As Long = 24
+' --- Base F0 ---
+Private Const B_HDR As Long = 3, B_DAT As Long = 4
+Private Const B_ISIN As Long = 3, B_SBS As Long = 5
+
+Sub CalcularDuracionFondo0()
+    Dim wbHome As Workbook: Set wbHome = ThisWorkbook
+    Dim wbFMS As Workbook, wbVec As Workbook
+    Dim openedFMS As Boolean, openedVec As Boolean, okCalc As Boolean
+    Dim i As Long, msgErr As String, saveMsg As String
+    Dim hoy As Date: hoy = Date
+
+    On Error GoTo Limpieza
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+
+    '--- 1. CONFIG ---
+    Dim carpeta As String, dFMS As String, dVec As String, archivo As String
+    LeerConfig wbHome, carpeta, dFMS, dVec, archivo
+    Dim pFMS As String, pVec As String
+    If Len(carpeta) > 0 Then
+        If Right(carpeta, 1) <> "\" Then carpeta = carpeta & "\"
+        If Len(dFMS) > 0 Then pFMS = carpeta & "FMS_" & dFMS & ".xlsx"
+        If Len(dVec) > 0 Then pVec = carpeta & dVec & ".xlsx"
+    End If
+
+    '--- 2. CURVA CP Duracion (input, crea si falta, no borra) ---
+    Dim cvDias() As Double, cvDur() As Double, nC As Long
+    LeerCurvaDur wbHome, cvDias, cvDur, nC
+
+    '--- 3. ABRIR ARCHIVOS ---
+    Set wbFMS = AbrirLibro(pFMS, "Selecciona el archivo FMS (t-2)", openedFMS)
+    If wbFMS Is Nothing Then GoTo Limpieza
+    Set wbVec = AbrirLibro(pVec, "Selecciona el vector SBS (AAAAMMDD)", openedVec)
+    If wbVec Is Nothing Then GoTo Limpieza
+
+    '--- 4. CONSERVAR ISIN MANUAL ---
+    Dim prevISIN As Object: Set prevISIN = CapturarISIN(wbHome)
+
+    '--- 5. VOLCAR VECTOR -> HOJA "SBS" ---
+    Dim wsSBS As Worksheet: Set wsSBS = VolcarVectorASBS(wbVec, wbHome)
+
+    '--- 6. DICCIONARIOS desde la hoja SBS (llave = código sin guiones, col E) ---
+    Dim dYTW As Object, dSPR As Object, dDUR As Object
+    Set dYTW = CreateObject("Scripting.Dictionary")
+    Set dSPR = CreateObject("Scripting.Dictionary")
+    Set dDUR = CreateObject("Scripting.Dictionary")
+    Dim lastS As Long: lastS = wsSBS.Cells(wsSBS.Rows.Count, 5).End(xlUp).Row
+    If lastS >= 2 Then
+        Dim datS As Variant, kk As String
+        datS = wsSBS.Range(wsSBS.Cells(2, 1), wsSBS.Cells(lastS, 5)).Value
+        For i = 1 To UBound(datS, 1)
+            kk = CStr(datS(i, 5))
+            If Len(kk) > 0 And Not dDUR.Exists(kk) Then
+                dYTW(kk) = datS(i, 2): dSPR(kk) = datS(i, 3): dDUR(kk) = datS(i, 4)
+            End If
+        Next i
+    End If
+
+    '--- 7. VALOR CARTERA FONDO 0 (Anexo I, línea 1.1.1) ---
+    Dim valorCartera As Double, hayValor As Boolean, desc As String
+    Dim wsA As Worksheet: Set wsA = wbFMS.Worksheets("Anexo I")
+    Dim lastA As Long: lastA = wsA.Cells(wsA.Rows.Count, A_FOND).End(xlUp).Row
+    If lastA >= 2 Then
+        Dim datA As Variant
+        datA = wsA.Range(wsA.Cells(2, 1), wsA.Cells(lastA, A_MONTO)).Value
+        For i = 1 To UBound(datA, 1)
+            If NormFond(datA(i, A_FOND)) = "00" Then
+                desc = Trim(CStr(datA(i, A_DESC)))
+                If Len(desc) > 0 Then
+                    If Split(desc, " ")(0) = "1.1.1" And IsNumeric(datA(i, A_MONTO)) Then
+                        valorCartera = CDbl(datA(i, A_MONTO)): hayValor = True: Exit For
+                    End If
+                End If
+            End If
+        Next i
+    End If
+
+    '--- 8. LEER CARTERA FONDO 0 ---
+    Dim wsC As Worksheet: Set wsC = wbFMS.Worksheets("Cartera")
+    Dim lastC As Long: lastC = wsC.Cells(wsC.Rows.Count, C_FOND).End(xlUp).Row
+    Dim datC As Variant
+    If lastC >= 2 Then datC = wsC.Range(wsC.Cells(2, 1), wsC.Cells(lastC, C_VCTO)).Value
+
+    '--- 9. HOJA "Base F0" ---
+    Dim wsB As Worksheet: Set wsB = HojaFija(wbHome, "Base F0")
+    wsB.Range("A1").Value = "BASE FONDO 0": wsB.Range("A1").Font.Bold = True
+    wsB.Range("C1").Value = "FMS (t-2): " & dFMS & "   |   Vector (t): " & dVec & "   |   Cálculo: " & Format(hoy, "dd/mm/yyyy")
+    Dim hdr As Variant, c As Long
+    hdr = Array("Asset Class", "Emisor", "ISIN", "Nemónico", "Código SBS", _
+                "Moneda", "Monto (mn)", "Vcto", "YTW", "Duración", "Spread", "Rating", "Origen")
+    For c = 0 To UBound(hdr): wsB.Cells(B_HDR, c + 1).Value = hdr(c): Next c
+    wsB.Range(wsB.Cells(B_HDR, 1), wsB.Cells(B_HDR, 13)).Font.Bold = True
+
+    '--- 10. LLENAR BASE + ACUMULAR ---
+    Dim r As Long: r = B_DAT
+    Dim nInstr As Long, nSinDur As Long, nCup As Long
+    Dim cod As String, cant As Double, monMn As Double
+    Dim ytw As Variant, spr As Variant, dur As Variant, origen As String
+    Dim totMonto As Double
+    Dim swYTW As Double, sumYTW As Double, swSPR As Double, sumSPR As Double, swDUR As Double, sumDUR As Double
+    Dim nMax As Long: nMax = 0
+    If Not IsEmpty(datC) Then nMax = UBound(datC, 1)
+    Dim mx As Long: mx = Application.Max(1, nMax)
+    Dim aNemo() As String, aCod() As String, aMon() As Double
+    Dim aCY() As Variant, aCD() As Variant, aCS() As Variant
+    ReDim aNemo(1 To mx): ReDim aCod(1 To mx): ReDim aMon(1 To mx)
+    ReDim aCY(1 To mx): ReDim aCD(1 To mx): ReDim aCS(1 To mx)
+    ' arrays de cupón
+    Dim cpNemo() As String, cpCod() As String, cpVcto() As Variant, cpDias() As Double, cpDur() As Variant
+    ReDim cpNemo(1 To mx): ReDim cpCod(1 To mx): ReDim cpVcto(1 To mx)
+    ReDim cpDias(1 To mx): ReDim cpDur(1 To mx)
+    Dim idx As Long: idx = 0
+
+    If Not IsEmpty(datC) Then
+        For i = 1 To UBound(datC, 1)
+            If NormFond(datC(i, C_FOND)) = "00" Then
+                nInstr = nInstr + 1
+                cod = NormCode(datC(i, C_SBS))
+                If IsNumeric(datC(i, C_CANT)) Then cant = CDbl(datC(i, C_CANT)) Else cant = 0
+                monMn = cant / 1000000
+
+                If dDUR.Exists(cod) Then
+                    ' --- SIN CUPÓN: del vector ---
+                    ytw = dYTW(cod): spr = dSPR(cod): dur = dDUR(cod): origen = "Vector"
+                Else
+                    ' --- CON CUPÓN: interpola duración ---
+                    Dim vd As Variant: vd = ToFecha(datC(i, C_VCTO))
+                    If IsDate(vd) And nC >= 1 Then
+                        Dim diasB As Double: diasB = CDbl(CLng(CDate(vd) - hoy))
+                        dur = InterpLineal(diasB, cvDias, cvDur, nC)
+                        ytw = "": spr = "": origen = "Cupón (curva)"
+                        nCup = nCup + 1
+                        cpNemo(nCup) = CStr(datC(i, C_NEMO)): cpCod(nCup) = cod
+                        cpVcto(nCup) = CDate(vd): cpDias(nCup) = diasB: cpDur(nCup) = dur
+                    Else
+                        ytw = "": spr = "": dur = "NO CALCULABLE": origen = "Cupón sin vcto/curva"
+                        nSinDur = nSinDur + 1
+                    End If
+                End If
+
+                wsB.Cells(r, 1).Value = datC(i, C_ASSET)
+                wsB.Cells(r, 2).Value = datC(i, C_EMISOR)
+                If prevISIN.Exists(cod) Then wsB.Cells(r, 3).Value = prevISIN(cod)
+                wsB.Cells(r, 4).Value = datC(i, C_NEMO)
+                wsB.Cells(r, 5).Value = cod
+                wsB.Cells(r, 6).Value = datC(i, C_MONEDA)
+                wsB.Cells(r, 7).Value = monMn
+                wsB.Cells(r, 8).Value = ToFecha(datC(i, C_VCTO))
+                wsB.Cells(r, 9).Value = ytw
+                wsB.Cells(r, 10).Value = dur
+                wsB.Cells(r, 11).Value = spr
+                wsB.Cells(r, 12).Value = datC(i, C_RATING)
+                wsB.Cells(r, 13).Value = origen
+
+                totMonto = totMonto + monMn
+                idx = idx + 1
+                aNemo(idx) = CStr(datC(i, C_NEMO)): aCod(idx) = cod: aMon(idx) = monMn
+                If IsNumeric(ytw) And monMn > 0 Then
+                    sumYTW = sumYTW + monMn * CDbl(ytw): swYTW = swYTW + monMn: aCY(idx) = monMn * CDbl(ytw)
+                Else: aCY(idx) = ""
+                End If
+                If IsNumeric(dur) And monMn > 0 Then
+                    sumDUR = sumDUR + monMn * CDbl(dur): swDUR = swDUR + monMn: aCD(idx) = monMn * CDbl(dur)
+                Else: aCD(idx) = ""
+                End If
+                If IsNumeric(spr) And monMn > 0 Then
+                    sumSPR = sumSPR + monMn * CDbl(spr): swSPR = swSPR + monMn: aCS(idx) = monMn * CDbl(spr)
+                Else: aCS(idx) = ""
+                End If
+                r = r + 1
+            End If
+        Next i
+    End If
+
+    wsB.Columns("G").NumberFormat = "#,##0.00"
+    wsB.Columns("H").NumberFormat = "dd/mm/yyyy"
+    wsB.Columns("I").NumberFormat = "0.00"
+    wsB.Columns("J").NumberFormat = "0.0000"
+    wsB.Columns("K").NumberFormat = "0"
+    wsB.Columns("A:M").AutoFit
+
+    '--- 11. HOJA "Cupón F0" (lista de bonos con cupón) ---
+    Dim wsCup As Worksheet: Set wsCup = HojaFija(wbHome, "Cupón F0")
+    wsCup.Range("A1").Value = "INSTRUMENTOS CON CUPÓN (duración por interpolación)"
+    wsCup.Range("A1").Font.Bold = True
+    Dim hC As Variant: hC = Array("Nemónico", "Código SBS", "Vcto", "Días (hoy→vcto)", "Duración interp.")
+    For c = 0 To UBound(hC): wsCup.Cells(3, c + 1).Value = hC(c): Next c
+    wsCup.Range(wsCup.Cells(3, 1), wsCup.Cells(3, 5)).Font.Bold = True
+    Dim j As Long
+    For j = 1 To nCup
+        wsCup.Cells(3 + j, 1).Value = cpNemo(j)
+        wsCup.Cells(3 + j, 2).Value = cpCod(j)
+        wsCup.Cells(3 + j, 3).Value = cpVcto(j)
+        wsCup.Cells(3 + j, 4).Value = cpDias(j)
+        wsCup.Cells(3 + j, 5).Value = cpDur(j)
+    Next j
+    wsCup.Columns("C").NumberFormat = "dd/mm/yyyy"
+    wsCup.Columns("E").NumberFormat = "0.0000"
+    wsCup.Columns("A:E").AutoFit
+
+    '--- 12. HOJA "Calculo F0" ---
+    Dim wsK As Worksheet: Set wsK = HojaFija(wbHome, "Calculo F0")
+    Dim wYTW As Double, wDUR As Double, wSPR As Double
+    If swYTW > 0 Then wYTW = sumYTW / swYTW
+    If swDUR > 0 Then wDUR = sumDUR / swDUR
+    If swSPR > 0 Then wSPR = sumSPR / swSPR
+
+    wsK.Range("A1").Value = "CÁLCULO FONDO 0": wsK.Range("A1").Font.Bold = True
+    wsK.Range("A2").Value = "FMS (t-2):": wsK.Range("B2").Value = dFMS
+    wsK.Range("C2").Value = "Vector (t):": wsK.Range("D2").Value = dVec
+    wsK.Range("A4").Value = "Valor cartera F0 (Anexo I 1.1.1):"
+    wsK.Range("D4").Value = IIf(hayValor, valorCartera, "NO ENCONTRADO")
+    wsK.Range("D4").NumberFormat = "#,##0.00"
+    wsK.Range("A5").Value = "Total instrumentos (Σ monto, mn):": wsK.Range("D5").Value = totMonto
+    wsK.Range("D5").NumberFormat = "#,##0.00"
+    wsK.Range("A6").Value = "YTW ponderado (excl. cupón):": wsK.Range("D6").Value = wYTW
+    wsK.Range("D6").NumberFormat = "0.00"
+    wsK.Range("A7").Value = "Duración ponderada:": wsK.Range("D7").Value = wDUR
+    wsK.Range("D7").NumberFormat = "0.0000": wsK.Range("D7").Font.Bold = True
+    If swDUR > 0 Then
+        If wDUR >= 1 Then
+            wsK.Range("D7").Interior.Color = RGB(255, 150, 150)
+            wsK.Range("E7").Value = "EXCEDE LÍMITE (>1)": wsK.Range("E7").Font.Color = RGB(192, 0, 0)
+        Else
+            wsK.Range("D7").Interior.Color = RGB(180, 230, 180)
+        End If
+    End If
+    wsK.Range("A8").Value = "Spread ponderado (excl. cupón):": wsK.Range("D8").Value = wSPR
+    wsK.Range("D8").NumberFormat = "0.00"
+    wsK.Range("A9").Value = "Rating ponderado:": wsK.Range("D9").Value = "PENDIENTE (falta escala numérica)"
+    wsK.Range("A10").Value = "Instrumentos:"
+    wsK.Range("D10").Value = nInstr & " total  |  " & nCup & " con cupón (curva)  |  " & nSinDur & " sin calcular"
+    wsK.Range("A11").Value = "Cobertura duración:"
+    wsK.Range("D11").Value = IIf(totMonto > 0, Format(swDUR / totMonto, "0.0%") & " del monto", "s/d")
+
+    Dim h2 As Variant, kr As Long: kr = 13
+    h2 = Array("Nemónico", "Código SBS", "Monto (mn)", "Monto×YTW", "Monto×Duración", "Monto×Spread")
+    For c = 0 To UBound(h2): wsK.Cells(kr, c + 1).Value = h2(c): Next c
+    wsK.Range(wsK.Cells(kr, 1), wsK.Cells(kr, 6)).Font.Bold = True
+    For j = 1 To idx
+        wsK.Cells(kr + j, 1).Value = aNemo(j): wsK.Cells(kr + j, 2).Value = aCod(j)
+        wsK.Cells(kr + j, 3).Value = aMon(j): wsK.Cells(kr + j, 4).Value = aCY(j)
+        wsK.Cells(kr + j, 5).Value = aCD(j): wsK.Cells(kr + j, 6).Value = aCS(j)
+    Next j
+    Dim tr As Long: tr = kr + idx + 1
+    wsK.Cells(tr, 1).Value = "TOTAL": wsK.Cells(tr, 1).Font.Bold = True
+    wsK.Cells(tr, 3).Value = totMonto: wsK.Cells(tr, 4).Value = sumYTW
+    wsK.Cells(tr, 5).Value = sumDUR: wsK.Cells(tr, 6).Value = sumSPR
+    wsK.Range(wsK.Cells(tr, 3), wsK.Cells(tr, 6)).Font.Bold = True
+    wsK.Range(wsK.Cells(kr + 1, 3), wsK.Cells(tr, 6)).NumberFormat = "#,##0.00"
+    wsK.Columns("A:F").AutoFit
+
+    '--- 13. GUARDAR COPIA (Base + Calculo) ---
+    If swDUR > 0 And Len(archivo) > 0 Then
+        If Right(archivo, 1) <> "\" Then archivo = archivo & "\"
+        If Len(Dir(archivo, vbDirectory)) > 0 Then
+            Dim outPath As String: outPath = archivo & "F0_Duracion_" & BestDateCode(dVec, dFMS) & ".xlsx"
+            wbHome.Sheets(Array("Base F0", "Calculo F0")).Copy
+            Dim wbOut As Workbook: Set wbOut = ActiveWorkbook
+            wbOut.SaveAs Filename:=outPath, FileFormat:=51
+            wbOut.Close SaveChanges:=False
+            saveMsg = "Archivado: " & outPath
+        Else
+            saveMsg = "Carpeta archivo (B4) no existe: no se guardó copia."
+        End If
+    ElseIf Len(archivo) = 0 Then
+        saveMsg = "Sin carpeta archivo en Config (B4): no se guardó copia."
+    End If
+    okCalc = True
+
+Limpieza:
+    If Err.Number <> 0 Then msgErr = "ERROR: " & Err.Description
+    If openedVec And Not wbVec Is Nothing Then wbVec.Close SaveChanges:=False
+    If openedFMS And Not wbFMS Is Nothing Then wbFMS.Close SaveChanges:=False
+    Application.DisplayAlerts = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    If Len(msgErr) > 0 Then
+        MsgBox msgErr, vbCritical, "Duración Fondo 0"
+    ElseIf okCalc Then
+        MsgBox "Listo." & vbCrLf & _
+               "Instrumentos F0: " & nInstr & "  (cupón: " & nCup & ", sin calcular: " & nSinDur & ")" & vbCrLf & _
+               "Total monto (mn): " & Format(totMonto, "#,##0.00") & vbCrLf & _
+               "Duración del fondo: " & IIf(swDUR > 0, Format(wDUR, "0.0000") & IIf(wDUR >= 1, "  EXCEDE 1", ""), "s/d") & vbCrLf & _
+               saveMsg, vbInformation, "Duración Fondo 0"
+    End If
+End Sub
+
+'------------------------------------------------------------------
+Private Sub LeerCurvaDur(wb As Workbook, ByRef cvDias() As Double, ByRef cvDur() As Double, ByRef nC As Long)
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = wb.Worksheets("CP Duracion")
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set ws = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
+        ws.Name = "CP Duracion"
+        ws.Range("A1").Value = "Curva CP Duracion (pegar de SBS). Interpolación usa C3:C8 (días) y D3:D8 (duración)."
+        ws.Range("A2").Value = "Nodo": ws.Range("C2").Value = "Días": ws.Range("D2").Value = "Duración"
+        ws.Range("A2:D2").Font.Bold = True
+        Dim nod As Variant, di As Variant, k As Long
+        nod = Array("CD1D", "CD1M", "CD3M", "CD6M", "CD9M", "CD1A")
+        di = Array(1, 30, 90, 180, 270, 360)
+        For k = 0 To 5
+            ws.Cells(3 + k, 1).Value = nod(k)
+            ws.Cells(3 + k, 3).Value = di(k)
+            ws.Cells(3 + k, 4).Value = di(k) / 360   ' default = días/360 (sobreescribir con lo de SBS)
+        Next k
+        ws.Columns("A:D").AutoFit
+    End If
+    Dim i As Long, cnt As Long: cnt = 0
+    ReDim cvDias(1 To 6): ReDim cvDur(1 To 6)
+    For i = 3 To 8
+        If IsNumeric(ws.Cells(i, 3).Value) And Len(Trim(CStr(ws.Cells(i, 3).Value))) > 0 _
+           And IsNumeric(ws.Cells(i, 4).Value) Then
+            cnt = cnt + 1
+            cvDias(cnt) = CDbl(ws.Cells(i, 3).Value)
+            cvDur(cnt) = CDbl(ws.Cells(i, 4).Value)
+        End If
+    Next i
+    nC = cnt
+End Sub
+
+'------------------------------------------------------------------
+Private Function InterpLineal(ByVal x As Double, xs() As Double, ys() As Double, ByVal n As Long) As Variant
+    Dim i As Long
+    If n < 1 Then InterpLineal = "": Exit Function
+    If n = 1 Then InterpLineal = ys(1): Exit Function
+    If x <= xs(1) Then InterpLineal = ys(1): Exit Function
+    If x >= xs(n) Then InterpLineal = ys(n): Exit Function
+    For i = 1 To n - 1
+        If x >= xs(i) And x <= xs(i + 1) Then
+            If xs(i + 1) = xs(i) Then
+                InterpLineal = ys(i)
+            Else
+                InterpLineal = ys(i) + (ys(i + 1) - ys(i)) * (x - xs(i)) / (xs(i + 1) - xs(i))
+            End If
+            Exit Function
+        End If
+    Next i
+    InterpLineal = ys(n)
+End Function
+
+'------------------------------------------------------------------
+Private Function CapturarISIN(wb As Workbook) As Object
+    Dim d As Object: Set d = CreateObject("Scripting.Dictionary")
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = wb.Worksheets("Base F0")
+    On Error GoTo 0
+    If Not ws Is Nothing Then
+        Dim last As Long: last = ws.Cells(ws.Rows.Count, B_SBS).End(xlUp).Row
+        Dim i As Long, cod As String, isin As String
+        For i = B_DAT To last
+            cod = Trim(CStr(ws.Cells(i, B_SBS).Value))
+            isin = Trim(CStr(ws.Cells(i, B_ISIN).Value))
+            If Len(cod) > 0 And Len(isin) > 0 Then
+                If Not d.Exists(cod) Then d(cod) = isin
+            End If
+        Next i
+    End If
+    Set CapturarISIN = d
+End Function
+
+'------------------------------------------------------------------
+Private Function VolcarVectorASBS(wbVec As Workbook, wbHome As Workbook) As Worksheet
+    Dim wsV As Worksheet: Set wsV = wbVec.Worksheets(1)   ' ojo: 1ra hoja del vector
+    Dim lastV As Long: lastV = wsV.Cells(wsV.Rows.Count, V_CODE).End(xlUp).Row
+    Dim wsS As Worksheet: Set wsS = HojaFija(wbHome, "SBS")
+    wsS.Range("A1:E1").Value = Array("Código (orig)", "YTW", "Spread", "Duración", "Código sin guiones")
+    wsS.Range("A1:E1").Font.Bold = True
+    If lastV >= 2 Then
+        Dim datV As Variant, n As Long, i As Long
+        datV = wsV.Range(wsV.Cells(2, 1), wsV.Cells(lastV, V_DUR)).Value
+        n = UBound(datV, 1)
+        Dim outA() As Variant: ReDim outA(1 To n, 1 To 5)
+        For i = 1 To n
+            outA(i, 1) = datV(i, V_CODE): outA(i, 2) = datV(i, V_YTW)
+            outA(i, 3) = datV(i, V_SPR): outA(i, 4) = datV(i, V_DUR)
+            outA(i, 5) = NormCode(datV(i, V_CODE))
+        Next i
+        wsS.Range(wsS.Cells(2, 1), wsS.Cells(n + 1, 5)).Value = outA
+        wsS.Columns("B").NumberFormat = "0.00": wsS.Columns("C").NumberFormat = "0"
+        wsS.Columns("D").NumberFormat = "0.0000"
+    End If
+    wsS.Columns("A:E").AutoFit
+    Set VolcarVectorASBS = wsS
+End Function
+
+'------------------------------------------------------------------
+Private Sub LeerConfig(wb As Workbook, ByRef carpeta As String, ByRef dFMS As String, _
+                       ByRef dVec As String, ByRef archivo As String)
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = wb.Worksheets("Config")
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set ws = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
+        ws.Name = "Config"
+        ws.Range("A1").Value = "Carpeta insumos (FMS y vector):"
+        ws.Range("A2").Value = "Fecha FMS (AAAAMMDD o fecha):"
+        ws.Range("A3").Value = "Fecha Vector (AAAAMMDD o fecha):"
+        ws.Range("A4").Value = "Carpeta archivo histórico:"
+        ws.Columns("A").AutoFit
+        Exit Sub
+    End If
+    carpeta = Trim(CStr(ws.Range("B1").Value))
+    dFMS = FechaStr(ws.Range("B2").Value)
+    dVec = FechaStr(ws.Range("B3").Value)
+    archivo = Trim(CStr(ws.Range("B4").Value))
+End Sub
+
+'------------------------------------------------------------------
+Private Function AbrirLibro(ByVal ruta As String, ByVal titulo As String, ByRef abierto As Boolean) As Workbook
+    Dim wb As Workbook, nombre As String, f As Variant
+    abierto = False
+    If Len(ruta) > 0 Then
+        nombre = Dir(ruta)
+        If Len(nombre) > 0 Then
+            On Error Resume Next
+            Set wb = Workbooks(nombre)
+            On Error GoTo 0
+            If Not wb Is Nothing Then Set AbrirLibro = wb: Exit Function
+            Set wb = Workbooks.Open(ruta, ReadOnly:=True, UpdateLinks:=False)
+            abierto = True: Set AbrirLibro = wb: Exit Function
+        End If
+    End If
+    f = Application.GetOpenFilename("Excel (*.xls*),*.xls*", , titulo)
+    If VarType(f) = vbBoolean Then Exit Function
+    nombre = Dir(CStr(f))
+    On Error Resume Next
+    Set wb = Workbooks(nombre)
+    On Error GoTo 0
+    If wb Is Nothing Then
+        Set wb = Workbooks.Open(CStr(f), ReadOnly:=True, UpdateLinks:=False)
+        abierto = True
+    End If
+    Set AbrirLibro = wb
+End Function
+
+'------------------------------------------------------------------
+Private Function HojaFija(wb As Workbook, nombre As String) As Worksheet
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = wb.Worksheets(nombre)
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set ws = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
+        ws.Name = nombre
+    Else
+        ws.Cells.Clear
+    End If
+    Set HojaFija = ws
+End Function
+
+'------------------------------------------------------------------
+Private Function NormCode(v As Variant) As String
+    Dim s As String
+    If IsNumeric(v) Then s = Format(v, "0") Else s = Trim(CStr(v))
+    NormCode = UCase(Trim(Replace(s, "-", "")))
+End Function
+Private Function NormFond(v As Variant) As String
+    If IsNumeric(v) Then NormFond = Format(CLng(v), "00") Else NormFond = Trim(CStr(v))
+End Function
+Private Function ToFecha(v As Variant) As Variant
+    Dim s As String
+    If IsNumeric(v) Then s = Format(v, "0") Else s = Trim(CStr(v))
+    If Len(s) = 8 Then ToFecha = DateSerial(CLng(Left(s, 4)), CLng(Mid(s, 5, 2)), CLng(Mid(s, 7, 2))) Else ToFecha = ""
+End Function
+Private Function FechaStr(v As Variant) As String
+    If IsDate(v) Then FechaStr = Format(v, "yyyymmdd") Else FechaStr = Trim(CStr(v))
+End Function
+Private Function BestDateCode(dVec As String, dFMS As String) As String
+    If Len(dVec) = 8 Then BestDateCode = dVec _
+    ElseIf Len(dFMS) = 8 Then BestDateCode = dFMS _
+    Else BestDateCode = Format(Now, "yyyymmdd")
+End Function
