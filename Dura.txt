@@ -1,11 +1,12 @@
 Option Explicit
 
 '==================================================================
-'  DURACIÓN FONDO 0  -  v8 (con rastreo de paso para diagnóstico)
-'  Config: B1 carpeta FMS | B2 carpeta vector |
-'          B3 fecha FMS (AUTO=t-2 háb.) | B4 fecha vector (AUTO=hoy) |
-'          B5 carpeta archivo histórico
-'  Archivos: FMS_AAAAMMDD.xlsx  |  "AAAAMMDD RFL.xls"
+'  DURACIÓN FONDO 0  -  v9
+'  Arreglo: el Fondo 0 se reconoce como "0", "00" o 0 (NormFond
+'  compara por valor numérico). Config con 2 carpetas + fechas AUTO.
+'  Vector "AAAAMMDD RFL.xls" (volcado blindado). Cupón por curva.
+'  Config: B1 carpeta FMS | B2 carpeta vector | B3 fecha FMS (AUTO) |
+'          B4 fecha vector (AUTO) | B5 carpeta archivo histórico
 '==================================================================
 
 ' --- Cartera (FMS) ---
@@ -98,7 +99,7 @@ Sub CalcularDuracionFondo0()
         Dim datA As Variant
         datA = wsA.Range(wsA.Cells(2, 1), wsA.Cells(lastA, A_MONTO)).Value
         For i = 1 To UBound(datA, 1)
-            If NormFond(datA(i, A_FOND)) = "00" Then
+            If NormFond(datA(i, A_FOND)) = "0" Then
                 desc = Trim(CStr(datA(i, A_DESC)))
                 If Len(desc) > 0 Then
                     If Split(desc, " ")(0) = "1.1.1" And IsNumeric(datA(i, A_MONTO)) Then
@@ -149,7 +150,7 @@ Sub CalcularDuracionFondo0()
 
     If Not IsEmpty(datC) Then
         For i = 1 To UBound(datC, 1)
-            If NormFond(datC(i, C_FOND)) = "00" Then
+            If NormFond(datC(i, C_FOND)) = "0" Then
                 nInstr = nInstr + 1
                 cod = NormCode(datC(i, C_SBS))
                 If IsNumeric(datC(i, C_CANT)) Then cant = CDbl(datC(i, C_CANT)) Else cant = 0
@@ -574,7 +575,14 @@ Private Function NormCode(v As Variant) As String
     NormCode = UCase(Trim(Replace(s, "-", "")))
 End Function
 Private Function NormFond(v As Variant) As String
-    If IsNumeric(v) Then NormFond = Format(CLng(v), "00") Else NormFond = Trim(CStr(v))
+    Dim s As String
+    s = Trim(CStr(v))
+    If Len(s) = 0 Then NormFond = "": Exit Function
+    If IsNumeric(s) Then
+        NormFond = CStr(CLng(Val(s)))
+    Else
+        NormFond = UCase(s)
+    End If
 End Function
 Private Function ToFecha(v As Variant) As Variant
     Dim s As String
