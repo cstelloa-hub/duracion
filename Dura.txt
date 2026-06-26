@@ -1,10 +1,7 @@
 Option Explicit
 
 '==================================================================
-'  DURACIÓN FONDO 0  -  v7
-'  - Volcado del vector BLINDADO (no se desborda aunque el RFL
-'    tenga muchas columnas o filas raras): lee A=código, N=YTW,
-'    O=Spread, X=Duración, celda por celda con protección.
+'  DURACIÓN FONDO 0  -  v8 (con rastreo de paso para diagnóstico)
 '  Config: B1 carpeta FMS | B2 carpeta vector |
 '          B3 fecha FMS (AUTO=t-2 háb.) | B4 fecha vector (AUTO=hoy) |
 '          B5 carpeta archivo histórico
@@ -29,18 +26,20 @@ Sub CalcularDuracionFondo0()
     Dim openedFMS As Boolean, openedVec As Boolean, okCalc As Boolean
     Dim i As Long, msgErr As String, saveMsg As String
     Dim hoy As Date: hoy = Date
+    Dim paso As String
 
     On Error GoTo Limpieza
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
     Application.DisplayAlerts = False
 
-    '--- 1. CONFIG (dos carpetas + fechas AUTO por día) ---
+    '--- 1. CONFIG ---
+    paso = "1-Config"
     Dim cFMS As String, cVec As String, rFMS As String, rVec As String, archivo As String
     LeerConfig wbHome, cFMS, cVec, rFMS, rVec, archivo
     Dim dFMS As String, dVec As String
-    dFMS = ResolverFecha(rFMS, 2, hoy)   ' FMS = t-2 hábiles
-    dVec = ResolverFecha(rVec, 0, hoy)   ' vector = hoy
+    dFMS = ResolverFecha(rFMS, 2, hoy)
+    dVec = ResolverFecha(rVec, 0, hoy)
     Dim pFMS As String, pVec As String
     If Len(cFMS) > 0 And Len(dFMS) = 8 Then
         If Right(cFMS, 1) <> "\" Then cFMS = cFMS & "\"
@@ -48,26 +47,32 @@ Sub CalcularDuracionFondo0()
     End If
     If Len(cVec) > 0 And Len(dVec) = 8 Then
         If Right(cVec, 1) <> "\" Then cVec = cVec & "\"
-        pVec = cVec & dVec & " RFL.xls"      ' vector: "AAAAMMDD RFL.xls"
+        pVec = cVec & dVec & " RFL.xls"
     End If
 
-    '--- 2. CURVA CP Duracion (input, crea si falta, no borra) ---
+    '--- 2. CURVA CP Duracion ---
+    paso = "2-Curva CP Duracion"
     Dim cvDias() As Double, cvDur() As Double, nC As Long
     LeerCurvaDur wbHome, cvDias, cvDur, nC
 
-    '--- 3. ABRIR ARCHIVOS (título muestra la ruta intentada si falla) ---
+    '--- 3. ABRIR ARCHIVOS ---
+    paso = "3-Abrir FMS"
     Set wbFMS = AbrirLibro(pFMS, "Selecciona el FMS (t-2)", openedFMS)
     If wbFMS Is Nothing Then GoTo Limpieza
+    paso = "3-Abrir Vector"
     Set wbVec = AbrirLibro(pVec, "Selecciona el vector SBS (AAAAMMDD RFL)", openedVec)
     If wbVec Is Nothing Then GoTo Limpieza
 
     '--- 4. CONSERVAR ISIN MANUAL ---
+    paso = "4-Capturar ISIN"
     Dim prevISIN As Object: Set prevISIN = CapturarISIN(wbHome)
 
-    '--- 5. VOLCAR VECTOR -> HOJA "SBS" (blindado) ---
+    '--- 5. VOLCAR VECTOR -> HOJA "SBS" ---
+    paso = "5-Volcar vector"
     Dim wsSBS As Worksheet: Set wsSBS = VolcarVectorASBS(wbVec, wbHome)
 
-    '--- 6. DICCIONARIOS desde la hoja SBS (llave = código sin guiones, col E) ---
+    '--- 6. DICCIONARIOS ---
+    paso = "6-Diccionarios"
     Dim dYTW As Object, dSPR As Object, dDUR As Object
     Set dYTW = CreateObject("Scripting.Dictionary")
     Set dSPR = CreateObject("Scripting.Dictionary")
@@ -84,7 +89,8 @@ Sub CalcularDuracionFondo0()
         Next i
     End If
 
-    '--- 7. VALOR CARTERA FONDO 0 (Anexo I, línea 1.1.1) ---
+    '--- 7. VALOR CARTERA FONDO 0 ---
+    paso = "7-Valor cartera"
     Dim valorCartera As Double, hayValor As Boolean, desc As String
     Dim wsA As Worksheet: Set wsA = wbFMS.Worksheets("Anexo I")
     Dim lastA As Long: lastA = wsA.Cells(wsA.Rows.Count, A_FOND).End(xlUp).Row
@@ -104,12 +110,14 @@ Sub CalcularDuracionFondo0()
     End If
 
     '--- 8. LEER CARTERA FONDO 0 ---
+    paso = "8-Leer cartera"
     Dim wsC As Worksheet: Set wsC = wbFMS.Worksheets("Cartera")
     Dim lastC As Long: lastC = wsC.Cells(wsC.Rows.Count, C_FOND).End(xlUp).Row
     Dim datC As Variant
     If lastC >= 2 Then datC = wsC.Range(wsC.Cells(2, 1), wsC.Cells(lastC, C_VCTO)).Value
 
     '--- 9. HOJA "Base F0" ---
+    paso = "9-Encabezados Base"
     Dim wsB As Worksheet: Set wsB = HojaFija(wbHome, "Base F0")
     wsB.Range("A1").Value = "BASE FONDO 0": wsB.Range("A1").Font.Bold = True
     wsB.Range("C1").Value = "FMS (t-2): " & dFMS & "   |   Vector (t): " & dVec & "   |   Cálculo: " & Format(hoy, "dd/mm/yyyy")
@@ -120,6 +128,7 @@ Sub CalcularDuracionFondo0()
     wsB.Range(wsB.Cells(B_HDR, 1), wsB.Cells(B_HDR, 13)).Font.Bold = True
 
     '--- 10. LLENAR BASE + ACUMULAR ---
+    paso = "10-Llenar base"
     Dim r As Long: r = B_DAT
     Dim nInstr As Long, nSinDur As Long, nCup As Long
     Dim cod As String, cant As Double, monMn As Double
@@ -197,6 +206,7 @@ Sub CalcularDuracionFondo0()
         Next i
     End If
 
+    paso = "10b-Formato Base"
     wsB.Columns("G").NumberFormat = "#,##0.00"
     wsB.Columns("H").NumberFormat = "dd/mm/yyyy"
     wsB.Columns("I").NumberFormat = "0.00"
@@ -206,6 +216,7 @@ Sub CalcularDuracionFondo0()
     FormatoInstitucional wsB, B_HDR, 1, 13
 
     '--- 11. HOJA "Cupón F0" ---
+    paso = "11-Cupón F0"
     Dim wsCup As Worksheet: Set wsCup = HojaFija(wbHome, "Cupón F0")
     wsCup.Range("A1").Value = "INSTRUMENTOS CON CUPÓN (duración por interpolación)"
     wsCup.Range("A1").Font.Bold = True
@@ -225,6 +236,7 @@ Sub CalcularDuracionFondo0()
     wsCup.Columns("A:E").AutoFit
 
     '--- 12. HOJA "Calculo F0" ---
+    paso = "12-Calculo F0"
     Dim wsK As Worksheet: Set wsK = HojaFija(wbHome, "Calculo F0")
     Dim wYTW As Double, wDUR As Double, wSPR As Double
     If swYTW > 0 Then wYTW = sumYTW / swYTW
@@ -277,7 +289,8 @@ Sub CalcularDuracionFondo0()
     wsK.Columns("A:F").AutoFit
     FormatoInstitucional wsK, kr, 1, 6
 
-    '--- 13. GUARDAR COPIA (Base + Calculo) ---
+    '--- 13. GUARDAR COPIA ---
+    paso = "13-Guardar copia"
     If swDUR > 0 And Len(archivo) > 0 Then
         If Right(archivo, 1) <> "\" Then archivo = archivo & "\"
         If Len(Dir(archivo, vbDirectory)) > 0 Then
@@ -296,7 +309,7 @@ Sub CalcularDuracionFondo0()
     okCalc = True
 
 Limpieza:
-    If Err.Number <> 0 Then msgErr = "ERROR " & Err.Number & ": " & Err.Description
+    If Err.Number <> 0 Then msgErr = "ERROR " & Err.Number & " en [" & paso & "]: " & Err.Description
     If openedVec And Not wbVec Is Nothing Then wbVec.Close SaveChanges:=False
     If openedFMS And Not wbFMS Is Nothing Then wbFMS.Close SaveChanges:=False
     Application.DisplayAlerts = True
@@ -315,17 +328,13 @@ Limpieza:
 End Sub
 
 '------------------------------------------------------------------
-'  VOLCADO BLINDADO: lee solo A=código, N=YTW, O=Spread, X=Duración.
-'  No se desborda aunque el RFL tenga muchas columnas/filas.
-'------------------------------------------------------------------
 Private Function VolcarVectorASBS(wbVec As Workbook, wbHome As Workbook) As Worksheet
-    Dim wsV As Worksheet: Set wsV = wbVec.Worksheets(1)   ' 1ra hoja del vector
+    Dim wsV As Worksheet: Set wsV = wbVec.Worksheets(1)
     Dim lastV As Long: lastV = wsV.Cells(wsV.Rows.Count, V_CODE).End(xlUp).Row
     Dim lastCol As Long: lastCol = wsV.Cells(1, wsV.Columns.Count).End(xlToLeft).Column
     Dim wsS As Worksheet: Set wsS = HojaFija(wbHome, "SBS")
     wsS.Range("A1:E1").Value = Array("Código (orig)", "YTW", "Spread", "Duración", "Código sin guiones")
     wsS.Range("A1:E1").Font.Bold = True
-
     Dim i As Long, outRow As Long: outRow = 2
     Dim cod As Variant
     For i = 2 To lastV
@@ -339,7 +348,6 @@ Private Function VolcarVectorASBS(wbVec As Workbook, wbHome As Workbook) As Work
             outRow = outRow + 1
         End If
     Next i
-
     wsS.Columns("B").NumberFormat = "0.00"
     wsS.Columns("C").NumberFormat = "0"
     wsS.Columns("D").NumberFormat = "0.0000"
@@ -489,22 +497,24 @@ End Function
 '------------------------------------------------------------------
 Private Sub LeerConfig(wb As Workbook, ByRef cFMS As String, ByRef cVec As String, _
                        ByRef rFMS As String, ByRef rVec As String, ByRef archivo As String)
-    Dim ws As Worksheet
+    Dim ws As Worksheet, nueva As Boolean
     On Error Resume Next
     Set ws = wb.Worksheets("Config")
     On Error GoTo 0
     If ws Is Nothing Then
         Set ws = wb.Worksheets.Add(After:=wb.Worksheets(wb.Worksheets.Count))
         ws.Name = "Config"
-        ws.Range("A1").Value = "Carpeta del FMS:"
-        ws.Range("A2").Value = "Carpeta del vector SBS:"
-        ws.Range("A3").Value = "Fecha FMS (AUTO = t-2 háb., o escribe fecha):"
-        ws.Range("A4").Value = "Fecha Vector (AUTO = hoy, o escribe fecha):"
-        ws.Range("A5").Value = "Carpeta archivo histórico:"
-        ws.Range("B3").Value = "AUTO": ws.Range("B4").Value = "AUTO"
-        ws.Columns("A").AutoFit
-        Exit Sub
+        nueva = True
     End If
+    ws.Range("A1").Value = "Carpeta del FMS:"
+    ws.Range("A2").Value = "Carpeta del vector SBS:"
+    ws.Range("A3").Value = "Fecha FMS (AUTO = t-2 háb., o escribe fecha):"
+    ws.Range("A4").Value = "Fecha Vector (AUTO = hoy, o escribe fecha):"
+    ws.Range("A5").Value = "Carpeta archivo histórico:"
+    If nueva Then
+        ws.Range("B3").Value = "AUTO": ws.Range("B4").Value = "AUTO"
+    End If
+    ws.Columns("A").AutoFit
     cFMS = Trim(CStr(ws.Range("B1").Value))
     cVec = Trim(CStr(ws.Range("B2").Value))
     rFMS = Trim(CStr(ws.Range("B3").Value))
