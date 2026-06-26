@@ -1,10 +1,11 @@
 Option Explicit
 
 '==================================================================
-'  DURACIÓN FONDO 0  -  v9
-'  Arreglo: el Fondo 0 se reconoce como "0", "00" o 0 (NormFond
-'  compara por valor numérico). Config con 2 carpetas + fechas AUTO.
-'  Vector "AAAAMMDD RFL.xls" (volcado blindado). Cupón por curva.
+'  DURACIÓN FONDO 0  -  v10
+'  - Arreglado el desbordamiento: el IIf de "Cobertura" (que dividía
+'    entre cero cuando no había instrumentos) se cambió por If/Else.
+'  - Cartelito de diagnóstico en paso 10: muestra nInstr y totMonto.
+'  - Fondo 0 reconocido como "0"/"00"/0.
 '  Config: B1 carpeta FMS | B2 carpeta vector | B3 fecha FMS (AUTO) |
 '          B4 fecha vector (AUTO) | B5 carpeta archivo histórico
 '==================================================================
@@ -153,7 +154,7 @@ Sub CalcularDuracionFondo0()
             If NormFond(datC(i, C_FOND)) = "0" Then
                 nInstr = nInstr + 1
                 cod = NormCode(datC(i, C_SBS))
-                If IsNumeric(datC(i, C_CANT)) Then cant = CDbl(datC(i, C_CANT)) Else cant = 0
+                cant = ANum(datC(i, C_CANT))
                 monMn = cant / 1000000
 
                 If dDUR.Exists(cod) Then
@@ -190,15 +191,15 @@ Sub CalcularDuracionFondo0()
                 totMonto = totMonto + monMn
                 idx = idx + 1
                 aNemo(idx) = CStr(datC(i, C_NEMO)): aCod(idx) = cod: aMon(idx) = monMn
-                If IsNumeric(ytw) And monMn > 0 Then
+                If IsNumeric(ytw) And monMn <> 0 Then
                     sumYTW = sumYTW + monMn * CDbl(ytw): swYTW = swYTW + monMn: aCY(idx) = monMn * CDbl(ytw)
                 Else: aCY(idx) = ""
                 End If
-                If IsNumeric(dur) And monMn > 0 Then
+                If IsNumeric(dur) And monMn <> 0 Then
                     sumDUR = sumDUR + monMn * CDbl(dur): swDUR = swDUR + monMn: aCD(idx) = monMn * CDbl(dur)
                 Else: aCD(idx) = ""
                 End If
-                If IsNumeric(spr) And monMn > 0 Then
+                If IsNumeric(spr) And monMn <> 0 Then
                     sumSPR = sumSPR + monMn * CDbl(spr): swSPR = swSPR + monMn: aCS(idx) = monMn * CDbl(spr)
                 Else: aCS(idx) = ""
                 End If
@@ -206,6 +207,14 @@ Sub CalcularDuracionFondo0()
             End If
         Next i
     End If
+
+    ' --- Cartelito de diagnóstico (puedes borrar esta línea cuando ya funcione) ---
+    Application.ScreenUpdating = True
+    MsgBox "Instrumentos Fondo 0 detectados: " & nInstr & vbCrLf & _
+           "Total monto (mn): " & totMonto & vbCrLf & _
+           "Filas leídas de Cartera: " & IIf(IsEmpty(datC), 0, UBound(datC, 1)), _
+           vbInformation, "Diagnóstico paso 10"
+    Application.ScreenUpdating = False
 
     paso = "10b-Formato Base"
     wsB.Columns("G").NumberFormat = "#,##0.00"
@@ -270,7 +279,11 @@ Sub CalcularDuracionFondo0()
     wsK.Range("A10").Value = "Instrumentos:"
     wsK.Range("D10").Value = nInstr & " total  |  " & nCup & " con cupón (curva)  |  " & nSinDur & " sin calcular"
     wsK.Range("A11").Value = "Cobertura duración:"
-    wsK.Range("D11").Value = IIf(totMonto > 0, Format(swDUR / totMonto, "0.0%") & " del monto", "s/d")
+    If totMonto > 0 Then
+        wsK.Range("D11").Value = Format(swDUR / totMonto, "0.0%") & " del monto"
+    Else
+        wsK.Range("D11").Value = "s/d"
+    End If
 
     Dim h2 As Variant, kr As Long: kr = 13
     h2 = Array("Nemónico", "Código SBS", "Monto (mn)", "Monto×YTW", "Monto×Duración", "Monto×Spread")
@@ -329,6 +342,15 @@ Limpieza:
 End Sub
 
 '------------------------------------------------------------------
+Private Function ANum(v As Variant) As Double
+    On Error GoTo fallo
+    If IsNumeric(v) Then ANum = CDbl(v) Else ANum = 0
+    Exit Function
+fallo:
+    ANum = 0
+End Function
+
+'------------------------------------------------------------------
 Private Function VolcarVectorASBS(wbVec As Workbook, wbHome As Workbook) As Worksheet
     Dim wsV As Worksheet: Set wsV = wbVec.Worksheets(1)
     Dim lastV As Long: lastV = wsV.Cells(wsV.Rows.Count, V_CODE).End(xlUp).Row
@@ -357,11 +379,7 @@ Private Function VolcarVectorASBS(wbVec As Workbook, wbHome As Workbook) As Work
 End Function
 
 Private Function LeerCelda(ws As Worksheet, ByVal fila As Long, ByVal col As Long, ByVal maxCol As Long) As Variant
-    If col > maxCol Then
-        LeerCelda = ""
-    Else
-        LeerCelda = ws.Cells(fila, col).Value
-    End If
+    If col > maxCol Then LeerCelda = "" Else LeerCelda = ws.Cells(fila, col).Value
 End Function
 
 '------------------------------------------------------------------
@@ -578,11 +596,7 @@ Private Function NormFond(v As Variant) As String
     Dim s As String
     s = Trim(CStr(v))
     If Len(s) = 0 Then NormFond = "": Exit Function
-    If IsNumeric(s) Then
-        NormFond = CStr(CLng(Val(s)))
-    Else
-        NormFond = UCase(s)
-    End If
+    If IsNumeric(s) Then NormFond = CStr(CLng(Val(s))) Else NormFond = UCase(s)
 End Function
 Private Function ToFecha(v As Variant) As Variant
     Dim s As String
