@@ -1,7 +1,10 @@
 Option Explicit
 
 '==================================================================
-'  DURACIÓN FONDO 0  -  v6 (fecha AUTO + diagnóstico de ruta)
+'  DURACIÓN FONDO 0  -  v7
+'  - Volcado del vector BLINDADO (no se desborda aunque el RFL
+'    tenga muchas columnas o filas raras): lee A=código, N=YTW,
+'    O=Spread, X=Duración, celda por celda con protección.
 '  Config: B1 carpeta FMS | B2 carpeta vector |
 '          B3 fecha FMS (AUTO=t-2 háb.) | B4 fecha vector (AUTO=hoy) |
 '          B5 carpeta archivo histórico
@@ -61,7 +64,7 @@ Sub CalcularDuracionFondo0()
     '--- 4. CONSERVAR ISIN MANUAL ---
     Dim prevISIN As Object: Set prevISIN = CapturarISIN(wbHome)
 
-    '--- 5. VOLCAR VECTOR -> HOJA "SBS" ---
+    '--- 5. VOLCAR VECTOR -> HOJA "SBS" (blindado) ---
     Dim wsSBS As Worksheet: Set wsSBS = VolcarVectorASBS(wbVec, wbHome)
 
     '--- 6. DICCIONARIOS desde la hoja SBS (llave = código sin guiones, col E) ---
@@ -148,7 +151,7 @@ Sub CalcularDuracionFondo0()
                 Else
                     Dim vd As Variant: vd = ToFecha(datC(i, C_VCTO))
                     If IsDate(vd) And nC >= 1 Then
-                        Dim diasB As Double: diasB = CDbl(CLng(CDate(vd) - hoy))
+                        Dim diasB As Double: diasB = CDbl(CDate(vd) - hoy)
                         dur = InterpLineal(diasB, cvDias, cvDur, nC)
                         ytw = "": spr = "": origen = "Cupón (curva)"
                         nCup = nCup + 1
@@ -206,8 +209,8 @@ Sub CalcularDuracionFondo0()
     Dim wsCup As Worksheet: Set wsCup = HojaFija(wbHome, "Cupón F0")
     wsCup.Range("A1").Value = "INSTRUMENTOS CON CUPÓN (duración por interpolación)"
     wsCup.Range("A1").Font.Bold = True
-    Dim hC As Variant: hC = Array("Nemónico", "Código SBS", "Vcto", "Días (hoy→vcto)", "Duración interp.")
-    For c = 0 To UBound(hC): wsCup.Cells(3, c + 1).Value = hC(c): Next c
+    Dim hCup As Variant: hCup = Array("Nemónico", "Código SBS", "Vcto", "Días (hoy→vcto)", "Duración interp.")
+    For c = 0 To UBound(hCup): wsCup.Cells(3, c + 1).Value = hCup(c): Next c
     wsCup.Range(wsCup.Cells(3, 1), wsCup.Cells(3, 5)).Font.Bold = True
     Dim j As Long
     For j = 1 To nCup
@@ -293,7 +296,7 @@ Sub CalcularDuracionFondo0()
     okCalc = True
 
 Limpieza:
-    If Err.Number <> 0 Then msgErr = "ERROR: " & Err.Description
+    If Err.Number <> 0 Then msgErr = "ERROR " & Err.Number & ": " & Err.Description
     If openedVec And Not wbVec Is Nothing Then wbVec.Close SaveChanges:=False
     If openedFMS And Not wbFMS Is Nothing Then wbFMS.Close SaveChanges:=False
     Application.DisplayAlerts = True
@@ -312,8 +315,46 @@ Limpieza:
 End Sub
 
 '------------------------------------------------------------------
-'  Resuelve la fecha: AUTO/vacío -> hoy menos N hábiles;
-'  AAAAMMDD o fecha escrita -> se respeta (override).
+'  VOLCADO BLINDADO: lee solo A=código, N=YTW, O=Spread, X=Duración.
+'  No se desborda aunque el RFL tenga muchas columnas/filas.
+'------------------------------------------------------------------
+Private Function VolcarVectorASBS(wbVec As Workbook, wbHome As Workbook) As Worksheet
+    Dim wsV As Worksheet: Set wsV = wbVec.Worksheets(1)   ' 1ra hoja del vector
+    Dim lastV As Long: lastV = wsV.Cells(wsV.Rows.Count, V_CODE).End(xlUp).Row
+    Dim lastCol As Long: lastCol = wsV.Cells(1, wsV.Columns.Count).End(xlToLeft).Column
+    Dim wsS As Worksheet: Set wsS = HojaFija(wbHome, "SBS")
+    wsS.Range("A1:E1").Value = Array("Código (orig)", "YTW", "Spread", "Duración", "Código sin guiones")
+    wsS.Range("A1:E1").Font.Bold = True
+
+    Dim i As Long, outRow As Long: outRow = 2
+    Dim cod As Variant
+    For i = 2 To lastV
+        cod = LeerCelda(wsV, i, V_CODE, lastCol)
+        If Len(Trim(CStr(cod))) > 0 Then
+            wsS.Cells(outRow, 1).Value = cod
+            wsS.Cells(outRow, 2).Value = LeerCelda(wsV, i, V_YTW, lastCol)
+            wsS.Cells(outRow, 3).Value = LeerCelda(wsV, i, V_SPR, lastCol)
+            wsS.Cells(outRow, 4).Value = LeerCelda(wsV, i, V_DUR, lastCol)
+            wsS.Cells(outRow, 5).Value = NormCode(cod)
+            outRow = outRow + 1
+        End If
+    Next i
+
+    wsS.Columns("B").NumberFormat = "0.00"
+    wsS.Columns("C").NumberFormat = "0"
+    wsS.Columns("D").NumberFormat = "0.0000"
+    wsS.Columns("A:E").AutoFit
+    Set VolcarVectorASBS = wsS
+End Function
+
+Private Function LeerCelda(ws As Worksheet, ByVal fila As Long, ByVal col As Long, ByVal maxCol As Long) As Variant
+    If col > maxCol Then
+        LeerCelda = ""
+    Else
+        LeerCelda = ws.Cells(fila, col).Value
+    End If
+End Function
+
 '------------------------------------------------------------------
 Private Function ResolverFecha(ByVal raw As String, ByVal offHabiles As Long, ByVal hoy As Date) As String
     Dim s As String: s = Trim(raw)
@@ -333,7 +374,7 @@ Private Function RestarHabiles(ByVal d As Date, ByVal n As Long) As Date
     Do While cnt < n
         d = d - 1
         Select Case Weekday(d, vbMonday)
-            Case 1 To 5: cnt = cnt + 1   ' lunes a viernes
+            Case 1 To 5: cnt = cnt + 1
         End Select
     Loop
     RestarHabiles = d
@@ -446,31 +487,6 @@ Private Function CapturarISIN(wb As Workbook) As Object
 End Function
 
 '------------------------------------------------------------------
-Private Function VolcarVectorASBS(wbVec As Workbook, wbHome As Workbook) As Worksheet
-    Dim wsV As Worksheet: Set wsV = wbVec.Worksheets(1)   ' ojo: 1ra hoja del vector
-    Dim lastV As Long: lastV = wsV.Cells(wsV.Rows.Count, V_CODE).End(xlUp).Row
-    Dim wsS As Worksheet: Set wsS = HojaFija(wbHome, "SBS")
-    wsS.Range("A1:E1").Value = Array("Código (orig)", "YTW", "Spread", "Duración", "Código sin guiones")
-    wsS.Range("A1:E1").Font.Bold = True
-    If lastV >= 2 Then
-        Dim datV As Variant, n As Long, i As Long
-        datV = wsV.Range(wsV.Cells(2, 1), wsV.Cells(lastV, V_DUR)).Value
-        n = UBound(datV, 1)
-        Dim outA() As Variant: ReDim outA(1 To n, 1 To 5)
-        For i = 1 To n
-            outA(i, 1) = datV(i, V_CODE): outA(i, 2) = datV(i, V_YTW)
-            outA(i, 3) = datV(i, V_SPR): outA(i, 4) = datV(i, V_DUR)
-            outA(i, 5) = NormCode(datV(i, V_CODE))
-        Next i
-        wsS.Range(wsS.Cells(2, 1), wsS.Cells(n + 1, 5)).Value = outA
-        wsS.Columns("B").NumberFormat = "0.00": wsS.Columns("C").NumberFormat = "0"
-        wsS.Columns("D").NumberFormat = "0.0000"
-    End If
-    wsS.Columns("A:E").AutoFit
-    Set VolcarVectorASBS = wsS
-End Function
-
-'------------------------------------------------------------------
 Private Sub LeerConfig(wb As Workbook, ByRef cFMS As String, ByRef cVec As String, _
                        ByRef rFMS As String, ByRef rVec As String, ByRef archivo As String)
     Dim ws As Worksheet
@@ -511,7 +527,6 @@ Private Function AbrirLibro(ByVal ruta As String, ByVal titulo As String, ByRef 
             abierto = True: Set AbrirLibro = wb: Exit Function
         End If
     End If
-    ' No encontrado -> selector con la ruta intentada en el título (diagnóstico)
     Dim tit As String: tit = titulo
     If Len(ruta) > 0 Then tit = tit & "  [no encontrado: " & ruta & "]"
     f = Application.GetOpenFilename("Excel (*.xls*),*.xls*", , tit)
