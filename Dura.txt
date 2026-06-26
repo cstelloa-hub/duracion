@@ -1,19 +1,11 @@
 Option Explicit
 
 '==================================================================
-'  DURACIÓN FONDO 0  -  v5 (completo)
-'  Config (hoja "Config"):
-'    B1 carpeta FMS | B2 carpeta vector | B3 fecha FMS (t-2)
-'    B4 fecha vector (t) | B5 carpeta archivo histórico
-'  Archivos:  FMS_AAAAMMDD.xlsx   |   "AAAAMMDD RFL.xls" (vector)
-'  - Sin cupón (está en vector): YTW/Spread/Duración del vector.
-'  - Con cupón (NO está en vector): Duración = interpolación lineal
-'    contra hoja "CP Duracion" (días C3:C8, duración D3:D8), con
-'    días = hoy -> vencimiento. YTM y Spread en blanco.
-'  - Inputs (no se borran): Config, CP Duracion.
-'  - Se reemplazan: SBS, Base F0, Calculo F0, Cupón F0.
-'  - Duración fondo = Σ(Monto×Duración)/Σ(Monto).
-'  - Formato institucional Profuturo en Base F0 y Calculo F0.
+'  DURACIÓN FONDO 0  -  v6 (fecha AUTO + diagnóstico de ruta)
+'  Config: B1 carpeta FMS | B2 carpeta vector |
+'          B3 fecha FMS (AUTO=t-2 háb.) | B4 fecha vector (AUTO=hoy) |
+'          B5 carpeta archivo histórico
+'  Archivos: FMS_AAAAMMDD.xlsx  |  "AAAAMMDD RFL.xls"
 '==================================================================
 
 ' --- Cartera (FMS) ---
@@ -40,15 +32,18 @@ Sub CalcularDuracionFondo0()
     Application.Calculation = xlCalculationManual
     Application.DisplayAlerts = False
 
-    '--- 1. CONFIG (dos carpetas separadas) ---
-    Dim cFMS As String, cVec As String, dFMS As String, dVec As String, archivo As String
-    LeerConfig wbHome, cFMS, cVec, dFMS, dVec, archivo
+    '--- 1. CONFIG (dos carpetas + fechas AUTO por día) ---
+    Dim cFMS As String, cVec As String, rFMS As String, rVec As String, archivo As String
+    LeerConfig wbHome, cFMS, cVec, rFMS, rVec, archivo
+    Dim dFMS As String, dVec As String
+    dFMS = ResolverFecha(rFMS, 2, hoy)   ' FMS = t-2 hábiles
+    dVec = ResolverFecha(rVec, 0, hoy)   ' vector = hoy
     Dim pFMS As String, pVec As String
-    If Len(cFMS) > 0 And Len(dFMS) > 0 Then
+    If Len(cFMS) > 0 And Len(dFMS) = 8 Then
         If Right(cFMS, 1) <> "\" Then cFMS = cFMS & "\"
         pFMS = cFMS & "FMS_" & dFMS & ".xlsx"
     End If
-    If Len(cVec) > 0 And Len(dVec) > 0 Then
+    If Len(cVec) > 0 And Len(dVec) = 8 Then
         If Right(cVec, 1) <> "\" Then cVec = cVec & "\"
         pVec = cVec & dVec & " RFL.xls"      ' vector: "AAAAMMDD RFL.xls"
     End If
@@ -57,8 +52,8 @@ Sub CalcularDuracionFondo0()
     Dim cvDias() As Double, cvDur() As Double, nC As Long
     LeerCurvaDur wbHome, cvDias, cvDur, nC
 
-    '--- 3. ABRIR ARCHIVOS ---
-    Set wbFMS = AbrirLibro(pFMS, "Selecciona el archivo FMS (t-2)", openedFMS)
+    '--- 3. ABRIR ARCHIVOS (título muestra la ruta intentada si falla) ---
+    Set wbFMS = AbrirLibro(pFMS, "Selecciona el FMS (t-2)", openedFMS)
     If wbFMS Is Nothing Then GoTo Limpieza
     Set wbVec = AbrirLibro(pVec, "Selecciona el vector SBS (AAAAMMDD RFL)", openedVec)
     If wbVec Is Nothing Then GoTo Limpieza
@@ -149,10 +144,8 @@ Sub CalcularDuracionFondo0()
                 monMn = cant / 1000000
 
                 If dDUR.Exists(cod) Then
-                    ' --- SIN CUPÓN: del vector ---
                     ytw = dYTW(cod): spr = dSPR(cod): dur = dDUR(cod): origen = "Vector"
                 Else
-                    ' --- CON CUPÓN: interpola duración ---
                     Dim vd As Variant: vd = ToFecha(datC(i, C_VCTO))
                     If IsDate(vd) And nC >= 1 Then
                         Dim diasB As Double: diasB = CDbl(CLng(CDate(vd) - hoy))
@@ -207,7 +200,7 @@ Sub CalcularDuracionFondo0()
     wsB.Columns("J").NumberFormat = "0.0000"
     wsB.Columns("K").NumberFormat = "0"
     wsB.Columns("A:M").AutoFit
-    FormatoInstitucional wsB, B_HDR, 1, 13     ' formato Profuturo Base F0
+    FormatoInstitucional wsB, B_HDR, 1, 13
 
     '--- 11. HOJA "Cupón F0" ---
     Dim wsCup As Worksheet: Set wsCup = HojaFija(wbHome, "Cupón F0")
@@ -279,7 +272,7 @@ Sub CalcularDuracionFondo0()
     wsK.Range(wsK.Cells(tr, 3), wsK.Cells(tr, 6)).Font.Bold = True
     wsK.Range(wsK.Cells(kr + 1, 3), wsK.Cells(tr, 6)).NumberFormat = "#,##0.00"
     wsK.Columns("A:F").AutoFit
-    FormatoInstitucional wsK, kr, 1, 6         ' formato Profuturo Calculo F0
+    FormatoInstitucional wsK, kr, 1, 6
 
     '--- 13. GUARDAR COPIA (Base + Calculo) ---
     If swDUR > 0 And Len(archivo) > 0 Then
@@ -310,6 +303,7 @@ Limpieza:
         MsgBox msgErr, vbCritical, "Duración Fondo 0"
     ElseIf okCalc Then
         MsgBox "Listo." & vbCrLf & _
+               "FMS: " & dFMS & "   Vector: " & dVec & vbCrLf & _
                "Instrumentos F0: " & nInstr & "  (cupón: " & nCup & ", sin calcular: " & nSinDur & ")" & vbCrLf & _
                "Total monto (mn): " & Format(totMonto, "#,##0.00") & vbCrLf & _
                "Duración del fondo: " & IIf(swDUR > 0, Format(wDUR, "0.0000") & IIf(wDUR >= 1, "  EXCEDE 1", ""), "s/d") & vbCrLf & _
@@ -318,21 +312,43 @@ Limpieza:
 End Sub
 
 '------------------------------------------------------------------
-'  Formato institucional Profuturo:
-'  Arial 8 | cabecera roja RGB(212,12,12), texto blanco
-'  solo bordes superior/inferior | sin laterales
+'  Resuelve la fecha: AUTO/vacío -> hoy menos N hábiles;
+'  AAAAMMDD o fecha escrita -> se respeta (override).
+'------------------------------------------------------------------
+Private Function ResolverFecha(ByVal raw As String, ByVal offHabiles As Long, ByVal hoy As Date) As String
+    Dim s As String: s = Trim(raw)
+    If Len(s) = 0 Or UCase(s) = "AUTO" Then
+        ResolverFecha = Format(RestarHabiles(hoy, offHabiles), "yyyymmdd")
+    ElseIf Len(s) = 8 And IsNumeric(s) Then
+        ResolverFecha = s
+    ElseIf IsDate(s) Then
+        ResolverFecha = Format(CDate(s), "yyyymmdd")
+    Else
+        ResolverFecha = ""
+    End If
+End Function
+
+Private Function RestarHabiles(ByVal d As Date, ByVal n As Long) As Date
+    Dim cnt As Long
+    Do While cnt < n
+        d = d - 1
+        Select Case Weekday(d, vbMonday)
+            Case 1 To 5: cnt = cnt + 1   ' lunes a viernes
+        End Select
+    Loop
+    RestarHabiles = d
+End Function
+
 '------------------------------------------------------------------
 Private Sub FormatoInstitucional(ws As Worksheet, ByVal filaHdr As Long, _
                                  ByVal colIni As Long, ByVal colFin As Long)
     Dim ult As Long
     ult = ws.Cells(ws.Rows.Count, colIni).End(xlUp).Row
     If ult < filaHdr Then ult = filaHdr
-
     ws.Cells.Font.Name = "Arial"
     With ws.Range(ws.Cells(filaHdr, colIni), ws.Cells(ult, colFin)).Font
         .Name = "Arial": .Size = 8
     End With
-
     With ws.Range(ws.Cells(filaHdr, colIni), ws.Cells(filaHdr, colFin))
         .Interior.Color = RGB(212, 12, 12)
         .Font.Color = RGB(255, 255, 255)
@@ -340,7 +356,6 @@ Private Sub FormatoInstitucional(ws As Worksheet, ByVal filaHdr As Long, _
         .HorizontalAlignment = xlCenter
         .VerticalAlignment = xlCenter
     End With
-
     Dim rng As Range
     Set rng = ws.Range(ws.Cells(filaHdr, colIni), ws.Cells(ult, colFin))
     rng.Borders(xlEdgeLeft).LineStyle = xlNone
@@ -372,7 +387,7 @@ Private Sub LeerCurvaDur(wb As Workbook, ByRef cvDias() As Double, ByRef cvDur()
         For k = 0 To 5
             ws.Cells(3 + k, 1).Value = nod(k)
             ws.Cells(3 + k, 3).Value = di(k)
-            ws.Cells(3 + k, 4).Value = di(k) / 360   ' default días/360 (sobreescribir con SBS)
+            ws.Cells(3 + k, 4).Value = di(k) / 360
         Next k
         ws.Columns("A:D").AutoFit
     End If
@@ -457,7 +472,7 @@ End Function
 
 '------------------------------------------------------------------
 Private Sub LeerConfig(wb As Workbook, ByRef cFMS As String, ByRef cVec As String, _
-                       ByRef dFMS As String, ByRef dVec As String, ByRef archivo As String)
+                       ByRef rFMS As String, ByRef rVec As String, ByRef archivo As String)
     Dim ws As Worksheet
     On Error Resume Next
     Set ws = wb.Worksheets("Config")
@@ -467,16 +482,17 @@ Private Sub LeerConfig(wb As Workbook, ByRef cFMS As String, ByRef cVec As Strin
         ws.Name = "Config"
         ws.Range("A1").Value = "Carpeta del FMS:"
         ws.Range("A2").Value = "Carpeta del vector SBS:"
-        ws.Range("A3").Value = "Fecha FMS (AAAAMMDD o fecha):"
-        ws.Range("A4").Value = "Fecha Vector (AAAAMMDD o fecha):"
+        ws.Range("A3").Value = "Fecha FMS (AUTO = t-2 háb., o escribe fecha):"
+        ws.Range("A4").Value = "Fecha Vector (AUTO = hoy, o escribe fecha):"
         ws.Range("A5").Value = "Carpeta archivo histórico:"
+        ws.Range("B3").Value = "AUTO": ws.Range("B4").Value = "AUTO"
         ws.Columns("A").AutoFit
         Exit Sub
     End If
     cFMS = Trim(CStr(ws.Range("B1").Value))
     cVec = Trim(CStr(ws.Range("B2").Value))
-    dFMS = FechaStr(ws.Range("B3").Value)
-    dVec = FechaStr(ws.Range("B4").Value)
+    rFMS = Trim(CStr(ws.Range("B3").Value))
+    rVec = Trim(CStr(ws.Range("B4").Value))
     archivo = Trim(CStr(ws.Range("B5").Value))
 End Sub
 
@@ -495,7 +511,10 @@ Private Function AbrirLibro(ByVal ruta As String, ByVal titulo As String, ByRef 
             abierto = True: Set AbrirLibro = wb: Exit Function
         End If
     End If
-    f = Application.GetOpenFilename("Excel (*.xls*),*.xls*", , titulo)
+    ' No encontrado -> selector con la ruta intentada en el título (diagnóstico)
+    Dim tit As String: tit = titulo
+    If Len(ruta) > 0 Then tit = tit & "  [no encontrado: " & ruta & "]"
+    f = Application.GetOpenFilename("Excel (*.xls*),*.xls*", , tit)
     If VarType(f) = vbBoolean Then Exit Function
     nombre = Dir(CStr(f))
     On Error Resume Next
