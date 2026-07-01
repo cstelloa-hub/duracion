@@ -5,17 +5,16 @@ Private Sub GenerarFlujos(wb As Workbook)
     On Error GoTo 0
     If wsB Is Nothing Then Exit Sub
 
-    ' Acumula Val_total por SEMANA de vencimiento.
-    ' Clave = lunes de esa semana (fecha), así ordena y agrupa solo.
+    ' Acumula Val_total por semana (clave = lunes de la semana, aaaammdd)
     Dim d As Object: Set d = CreateObject("Scripting.Dictionary")
     Dim last As Long: last = wsB.Cells(wsB.Rows.Count, 8).End(xlUp).Row   ' H = Vcto
     Dim i As Long, vcto As Variant, monto As Double, lun As Date, clave As String
     For i = B_DAT To last
         vcto = wsB.Cells(i, 8).Value
         monto = 0
-        If IsNumeric(wsB.Cells(i, 7).Value) Then monto = CDbl(wsB.Cells(i, 7).Value)  ' G = Monto (mn)
+        If IsNumeric(wsB.Cells(i, 7).Value) Then monto = CDbl(wsB.Cells(i, 7).Value)   ' G = Monto (mn)
         If IsDate(vcto) Then
-            lun = CDate(vcto) - (Weekday(CDate(vcto), vbMonday) - 1)   ' lunes de la semana
+            lun = CDate(vcto) - (Weekday(CDate(vcto), vbMonday) - 1)
             clave = Format(lun, "yyyymmdd")
             If d.Exists(clave) Then d(clave) = d(clave) + monto Else d(clave) = monto
         End If
@@ -24,10 +23,10 @@ Private Sub GenerarFlujos(wb As Workbook)
     Set wsF = HojaFija(wb, "Flujos F0")
     wsF.Range("A1").Value = "FLUJOS POR SEMANA DE VENCIMIENTO (Val_total, mn)"
     wsF.Range("A1").Font.Bold = True
-    wsF.Range("A3").Value = "Semana (lun–dom)"
-    wsF.Range("B3").Value = "Monto a recibir (mn)"
-    wsF.Range("C3").Value = "% del total"
-    wsF.Range("A3:C3").Font.Bold = True
+    Dim hf As Variant, c As Long
+    hf = Array("Mes", "Sem", "Semana (lun–dom)", "Monto (mn)", "Distribución", "% del total", "Acum. (mn)")
+    For c = 0 To UBound(hf): wsF.Cells(3, c + 1).Value = hf(c): Next c
+    wsF.Range(wsF.Cells(3, 1), wsF.Cells(3, 7)).Font.Bold = True
 
     Dim n As Long: n = d.Count
     If n = 0 Then Exit Sub
@@ -36,7 +35,6 @@ Private Sub GenerarFlujos(wb As Workbook)
     For Each k In d.Keys
         j = j + 1: claves(j) = CStr(k)
     Next k
-    ' orden ascendente por fecha
     Dim a As Long, b As Long, tmp As String
     For a = 1 To n - 1
         For b = a + 1 To n
@@ -47,21 +45,45 @@ Private Sub GenerarFlujos(wb As Workbook)
     Dim total As Double
     For a = 1 To n: total = total + d(claves(a)): Next a
 
-    Dim r As Long: r = 4, lunD As Date, domD As Date
+    Dim r As Long, lunD As Date, domD As Date, acum As Double, mesPrev As String, mesAct As String
+    r = 4: acum = 0: mesPrev = ""
     For a = 1 To n
         lunD = DateSerial(CInt(Left(claves(a), 4)), CInt(Mid(claves(a), 5, 2)), CInt(Right(claves(a), 2)))
         domD = lunD + 6
-        wsF.Cells(r, 1).Value = Format(lunD, "dd/mm/yy") & " – " & Format(domD, "dd/mm/yy")
-        wsF.Cells(r, 2).Value = d(claves(a))
-        If total <> 0 Then wsF.Cells(r, 3).Value = d(claves(a)) / total
+        mesAct = Format(lunD, "mmm-yyyy")
+        acum = acum + d(claves(a))
+        If mesAct <> mesPrev Then wsF.Cells(r, 1).Value = mesAct
+        mesPrev = mesAct
+        wsF.Cells(r, 2).Value = a
+        wsF.Cells(r, 3).Value = Format(lunD, "dd/mm/yy") & " – " & Format(domD, "dd/mm/yy")
+        wsF.Cells(r, 4).Value = d(claves(a))
+        wsF.Cells(r, 5).Value = d(claves(a))                 ' col E = base de la barra (mismo monto)
+        If total <> 0 Then wsF.Cells(r, 6).Value = d(claves(a)) / total
+        wsF.Cells(r, 7).Value = acum
         r = r + 1
     Next a
+    Dim filaTot As Long: filaTot = r
     wsF.Cells(r, 1).Value = "TOTAL": wsF.Cells(r, 1).Font.Bold = True
-    wsF.Cells(r, 2).Value = total: wsF.Cells(r, 2).Font.Bold = True
-    If total <> 0 Then wsF.Cells(r, 3).Value = 1
+    wsF.Cells(r, 4).Value = total: wsF.Cells(r, 4).Font.Bold = True
+    If total <> 0 Then wsF.Cells(r, 6).Value = 1: wsF.Cells(r, 6).Font.Bold = True
 
-    wsF.Columns("B").NumberFormat = "#,##0.00"
-    wsF.Columns("C").NumberFormat = "0.0%"
-    wsF.Columns("A:C").AutoFit
-    FormatoInstitucional wsF, 3, 1, 3
+    ' Barras de datos en la columna E (solo las filas de datos)
+    On Error Resume Next
+    Dim rngBar As Range
+    Set rngBar = wsF.Range(wsF.Cells(4, 5), wsF.Cells(filaTot - 1, 5))
+    rngBar.FormatConditions.Delete
+    Dim db As Databar
+    Set db = rngBar.FormatConditions.AddDatabar
+    db.BarColor.Color = RGB(99, 153, 34)        ' verde
+    db.BarFillType = xlDataBarFillSolid
+    db.ShowValue = False                         ' oculta el número, deja solo la barra
+    On Error GoTo 0
+
+    wsF.Columns("D").NumberFormat = "#,##0.00"
+    wsF.Columns("F").NumberFormat = "0.0%"
+    wsF.Columns("G").NumberFormat = "#,##0.00"
+    wsF.Columns("E").ColumnWidth = 18
+    wsF.Columns("A:D").AutoFit
+    wsF.Columns("F:G").AutoFit
+    FormatoInstitucional wsF, 3, 1, 7
 End Sub
