@@ -1,0 +1,200 @@
+Option Explicit
+
+' === Columnas de la DB-Histórica CP (2) ===
+Private Const DB_VCTO As Long = 2, DB_EMIS As Long = 4, DB_SECT As Long = 7
+Private Const DB_RATING As Long = 12, DB_ANIOS As Long = 14
+Private Const DB_TASA As Long = 17, DB_TBASE As Long = 18, DB_SPREAD As Long = 19
+Private Const DB_HOJA As String = "DB-Histórica CP (2)"
+Private Const MAX_COMP As Long = 8
+
+Sub BuscarComparables()
+    Dim wb As Workbook: Set wb = ThisWorkbook
+    Dim wsC As Worksheet, wsDB As Worksheet
+    On Error GoTo fallo
+
+    Set wsC = HojaComparables(wb)
+
+    Dim inEmis As String, inSect As String, inRating As String
+    Dim inPlazo As Double, inTBase As Double, carpeta As String
+    inEmis = Trim(CStr(wsC.Range("B4").Value))
+    inSect = Trim(CStr(wsC.Range("B5").Value))
+    inRating = UCase(Trim(CStr(wsC.Range("B6").Value)))
+    inPlazo = Val(wsC.Range("B7").Value)
+    inTBase = Val(wsC.Range("B9").Value)
+    carpeta = Trim(CStr(wsC.Range("B10").Value))
+
+    If Len(inRating) = 0 Or inPlazo <= 0 Then
+        MsgBox "Completa al menos Rating (B6) y Plazo (B7).", vbExclamation: Exit Sub
+    End If
+
+    On Error Resume Next
+    Set wsDB = wb.Worksheets(DB_HOJA)
+    On Error GoTo fallo
+    If wsDB Is Nothing Then
+        MsgBox "No encuentro la hoja '" & DB_HOJA & "' en este archivo.", vbCritical: Exit Sub
+    End If
+
+    Dim lastDB As Long: lastDB = wsDB.Cells(wsDB.Rows.Count, DB_EMIS).End(xlUp).Row
+    Dim dat As Variant
+    dat = wsDB.Range(wsDB.Cells(2, 1), wsDB.Cells(lastDB, DB_SPREAD)).Value
+
+    Dim res() As Variant, nRes As Long, nivel As String
+    BuscaNivel dat, inEmis, "", inRating, inPlazo, 0.5, res, nRes
+    nivel = "por EMISOR exacto (±6m)"
+    If nRes < 3 Then
+        BuscaNivel dat, "", inSect, inRating, inPlazo, 0.5, res, nRes
+        nivel = "por SECTOR (±6m)"
+    End If
+    If nRes < 3 Then
+        BuscaNivel dat, "", inSect, inRating, inPlazo, 1#, res, nRes
+        nivel = "por SECTOR (plazo ±1 año)"
+    End If
+
+    EscribeResultados wsC, res, nRes, nivel, inTBase
+
+    ' --- Guardar copia de solo la hoja Comparables ---
+    Dim saveMsg As String
+    If Len(carpeta) > 0 Then
+        If Right(carpeta, 1) <> "\" Then carpeta = carpeta & "\"
+        If Len(Dir(carpeta, vbDirectory)) > 0 Then
+            Dim nomE As String: nomE = LimpiaNombre(inEmis)
+            If Len(nomE) = 0 Then nomE = "SinEmisor"
+            Dim outPath As String
+            outPath = carpeta & "Comparable_" & Format(Now, "yyyymmdd") & "_" & nomE & ".xlsx"
+            Application.DisplayAlerts = False
+            wsC.Copy
+            ActiveWorkbook.SaveAs Filename:=outPath, FileFormat:=51
+            ActiveWorkbook.Close SaveChanges:=False
+            Application.DisplayAlerts = True
+            saveMsg = vbCrLf & "Archivado: " & outPath
+        Else
+            saveMsg = vbCrLf & "Carpeta (B10) no existe: no se guardó copia."
+        End If
+    Else
+        saveMsg = vbCrLf & "Sin carpeta en B10: no se guardó copia."
+    End If
+
+    MsgBox "Comparables: " & nRes & "  |  Match: " & nivel & saveMsg, vbInformation, "Comparables"
+    Exit Sub
+fallo:
+    Application.DisplayAlerts = True
+    MsgBox "ERROR: " & Err.Description, vbCritical, "Comparables"
+End Sub
+
+Private Sub BuscaNivel(dat As Variant, emis As String, sect As String, rating As String, _
+                       plazo As Double, tol As Double, ByRef res() As Variant, ByRef nRes As Long)
+    Dim i As Long, cnt As Long
+    ReDim res(1 To 5000, 1 To 6)
+    cnt = 0
+    For i = 1 To UBound(dat, 1)
+        Dim okE As Boolean, okS As Boolean, okR As Boolean, okP As Boolean
+        okR = (UCase(Trim(CStr(dat(i, DB_RATING)))) = rating)
+        okP = IsNumeric(dat(i, DB_ANIOS))
+        If okP Then okP = (Abs(CDbl(dat(i, DB_ANIOS)) - plazo) <= tol)
+        okE = (Len(emis) = 0) Or (InStr(1, Trim(CStr(dat(i, DB_EMIS))), emis, vbTextCompare) > 0)
+        okS = (Len(sect) = 0) Or (InStr(1, Trim(CStr(dat(i, DB_SECT))), sect, vbTextCompare) > 0)
+        If okR And okP And okE And okS Then
+            Dim sp As Double, hasSp As Boolean: hasSp = False
+            If IsNumeric(dat(i, DB_TASA)) And IsNumeric(dat(i, DB_TBASE)) Then
+                sp = (CDbl(dat(i, DB_TASA)) - CDbl(dat(i, DB_TBASE))): hasSp = True
+            ElseIf IsNumeric(dat(i, DB_SPREAD)) Then
+                sp = CDbl(dat(i, DB_SPREAD)): hasSp = True
+            End If
+            If hasSp Then
+                cnt = cnt + 1
+                res(cnt, 1) = dat(i, DB_VCTO): res(cnt, 2) = dat(i, DB_EMIS)
+                res(cnt, 3) = dat(i, DB_ANIOS): res(cnt, 4) = dat(i, DB_RATING)
+                res(cnt, 5) = dat(i, DB_TBASE): res(cnt, 6) = sp
+            End If
+        End If
+    Next i
+    nRes = cnt
+End Sub
+
+Private Sub EscribeResultados(ws As Worksheet, res As Variant, nRes As Long, _
+                              nivel As String, tBaseHoy As Double)
+    ws.Range("A13:H300").Clear
+    ws.Range("A13").Value = "Match: " & nivel & "   |   Comparables: " & nRes
+    ws.Range("A13").Font.Bold = True
+
+    Dim hd As Variant, c As Long
+    hd = Array("Emisor", "Plazo", "Rating", "Vcto", "Tasa base", "Spread")
+    For c = 0 To UBound(hd): ws.Cells(15, c + 1).Value = hd(c): Next c
+    ws.Range(ws.Cells(15, 1), ws.Cells(15, 6)).Font.Bold = True
+
+    Dim r As Long, k As Long, shown As Long
+    r = 16: shown = 0
+    Dim spreads() As Double
+    If nRes > 0 Then ReDim spreads(1 To nRes)
+    For k = 1 To nRes
+        spreads(k) = CDbl(res(k, 6))
+        If shown < MAX_COMP Then
+            ws.Cells(r, 1).Value = res(k, 2)
+            ws.Cells(r, 2).Value = res(k, 3)
+            ws.Cells(r, 3).Value = res(k, 4)
+            If IsDate(res(k, 1)) Then ws.Cells(r, 4).Value = CDate(res(k, 1))
+            ws.Cells(r, 5).Value = res(k, 5)
+            ws.Cells(r, 6).Value = res(k, 6)
+            r = r + 1: shown = shown + 1
+        End If
+    Next k
+    ws.Columns("D").NumberFormat = "dd/mm/yyyy"
+
+    Dim baseR As Long: baseR = r + 1
+    ws.Cells(baseR, 1).Value = "DISTRIBUCIÓN DEL SPREAD": ws.Cells(baseR, 1).Font.Bold = True
+    If nRes > 0 Then
+        Dim wf As WorksheetFunction: Set wf = Application.WorksheetFunction
+        Dim medi As Double, q1 As Double, q3 As Double, mn As Double, mx As Double
+        mn = wf.Min(spreads): mx = wf.Max(spreads): medi = wf.Median(spreads)
+        q1 = wf.Quartile(spreads, 1): q3 = wf.Quartile(spreads, 3)
+        ws.Cells(baseR + 1, 1).Value = "Mínimo":  ws.Cells(baseR + 1, 2).Value = mn
+        ws.Cells(baseR + 2, 1).Value = "Q1":      ws.Cells(baseR + 2, 2).Value = q1
+        ws.Cells(baseR + 3, 1).Value = "Mediana": ws.Cells(baseR + 3, 2).Value = medi: ws.Cells(baseR + 3, 1).Font.Bold = True
+        ws.Cells(baseR + 4, 1).Value = "Q3":      ws.Cells(baseR + 4, 2).Value = q3
+        ws.Cells(baseR + 5, 1).Value = "Máximo":  ws.Cells(baseR + 5, 2).Value = mx
+
+        Dim lr As Long: lr = baseR + 7
+        ws.Cells(lr, 1).Value = "LECTURA FINAL": ws.Cells(lr, 1).Font.Bold = True
+        ws.Cells(lr + 1, 1).Value = "Tasa base hoy:": ws.Cells(lr + 1, 2).Value = tBaseHoy
+        ws.Cells(lr + 2, 1).Value = "Spread mediano:": ws.Cells(lr + 2, 2).Value = medi
+        ws.Cells(lr + 3, 1).Value = "TASA SUGERIDA:": ws.Cells(lr + 3, 1).Font.Bold = True
+        ws.Cells(lr + 3, 2).Value = tBaseHoy + medi
+        ws.Cells(lr + 3, 2).Font.Bold = True
+        ws.Cells(lr + 4, 1).Value = "Banda (Q1–Q3):"
+        ws.Cells(lr + 4, 2).Value = Format(tBaseHoy + q1, "0.00%") & " – " & Format(tBaseHoy + q3, "0.00%")
+        ws.Cells(lr + 1, 2).NumberFormat = "0.00%"
+        ws.Cells(lr + 3, 2).NumberFormat = "0.00%"
+    End If
+    ws.Columns("A:F").AutoFit
+End Sub
+
+Private Function HojaComparables(wb As Workbook) As Worksheet
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = wb.Worksheets("Comparables")
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set ws = wb.Worksheets.Add(Before:=wb.Worksheets(1))
+        ws.Name = "Comparables"
+        ws.Range("A1").Value = "BUSCADOR DE COMPARABLES — EMISIÓN NUEVA"
+        ws.Range("A1").Font.Bold = True
+        ws.Range("A3").Value = "INPUTS": ws.Range("A3").Font.Bold = True
+        ws.Range("A4").Value = "Emisor:"
+        ws.Range("A5").Value = "Sector:"
+        ws.Range("A6").Value = "Rating:"
+        ws.Range("A7").Value = "Plazo (años):"
+        ws.Range("A8").Value = "Monto (mn):"
+        ws.Range("A9").Value = "Tasa base hoy (%):"
+        ws.Range("A10").Value = "Carpeta para guardar:"
+        ws.Columns("A").AutoFit
+    End If
+    Set HojaComparables = ws
+End Function
+
+Private Function LimpiaNombre(s As String) As String
+    Dim bad As Variant, x As Variant, t As String
+    t = s
+    bad = Array("\", "/", ":", "*", "?", """", "<", ">", "|", " ", ".")
+    For Each x In bad: t = Replace(t, x, "_"): Next x
+    LimpiaNombre = t
+End Function
