@@ -4,6 +4,7 @@ Option Explicit
 Private Const DB_VCTO As Long = 2, DB_EMIS As Long = 4, DB_SECT As Long = 7
 Private Const DB_RATING As Long = 12, DB_ANIOS As Long = 14
 Private Const DB_TASA As Long = 17, DB_TBASE As Long = 18, DB_SPREAD As Long = 19
+Private Const DB_OFERTA As Long = 21   ' U = Oferta (monto/tamaño)
 Private Const DB_HOJA As String = "DB-Histórica CP (2)"
 Private Const MAX_COMP As Long = 8
 
@@ -15,16 +16,21 @@ Sub BuscarComparables()
     Set wsC = HojaComparables(wb)
 
     Dim inEmis As String, inSect As String, inRating As String
-    Dim inPlazo As Double, inTBase As Double, carpeta As String
+    Dim inPlazo As Double, inMonto As Double, inTBase As Double, carpeta As String
     inEmis = Trim(CStr(wsC.Range("B4").Value))
     inSect = Trim(CStr(wsC.Range("B5").Value))
     inRating = UCase(Trim(CStr(wsC.Range("B6").Value)))
     inPlazo = Val(wsC.Range("B7").Value)
+    inMonto = Val(wsC.Range("B8").Value)
     inTBase = Val(wsC.Range("B9").Value)
     carpeta = Trim(CStr(wsC.Range("B10").Value))
 
-    If Len(inRating) = 0 Or inPlazo <= 0 Then
-        MsgBox "Completa al menos Rating (B6) y Plazo (B7).", vbExclamation: Exit Sub
+    ' --- Validación de obligatorios ---
+    If inPlazo <= 0 Or inMonto <= 0 Then
+        MsgBox "Plazo (B7) y Monto (B8) son obligatorios.", vbExclamation: Exit Sub
+    End If
+    If Len(inEmis) = 0 And Len(inSect) = 0 Then
+        MsgBox "Pon al menos Sector (B5) o Emisor (B4).", vbExclamation: Exit Sub
     End If
 
     On Error Resume Next
@@ -36,18 +42,23 @@ Sub BuscarComparables()
 
     Dim lastDB As Long: lastDB = wsDB.Cells(wsDB.Rows.Count, DB_EMIS).End(xlUp).Row
     Dim dat As Variant
-    dat = wsDB.Range(wsDB.Cells(2, 1), wsDB.Cells(lastDB, DB_SPREAD)).Value
+    dat = wsDB.Range(wsDB.Cells(2, 1), wsDB.Cells(lastDB, DB_OFERTA)).Value
 
+    ' --- Cascada de búsqueda ---
     Dim res() As Variant, nRes As Long, nivel As String
-    BuscaNivel dat, inEmis, "", inRating, inPlazo, 0.5, res, nRes
-    nivel = "por EMISOR exacto (±6m)"
+    BuscaNivel dat, inEmis, "", inRating, inPlazo, 0.5, inMonto, 0.5, res, nRes
+    nivel = "por EMISOR (±6m, monto ±50%)"
     If nRes < 3 Then
-        BuscaNivel dat, "", inSect, inRating, inPlazo, 0.5, res, nRes
-        nivel = "por SECTOR (±6m)"
+        BuscaNivel dat, "", inSect, inRating, inPlazo, 0.5, inMonto, 0.5, res, nRes
+        nivel = "por SECTOR (±6m, monto ±50%)"
     End If
     If nRes < 3 Then
-        BuscaNivel dat, "", inSect, inRating, inPlazo, 1#, res, nRes
-        nivel = "por SECTOR (plazo ±1 año)"
+        BuscaNivel dat, "", inSect, inRating, inPlazo, 1#, inMonto, 0.5, res, nRes
+        nivel = "por SECTOR (plazo ±1 año, monto ±50%)"
+    End If
+    If nRes < 3 Then
+        BuscaNivel dat, "", inSect, inRating, inPlazo, 1#, inMonto, 0, res, nRes
+        nivel = "por SECTOR (plazo ±1 año, sin filtro de monto)"
     End If
 
     EscribeResultados wsC, res, nRes, nivel, inTBase
@@ -58,7 +69,8 @@ Sub BuscarComparables()
         If Right(carpeta, 1) <> "\" Then carpeta = carpeta & "\"
         If Len(Dir(carpeta, vbDirectory)) > 0 Then
             Dim nomE As String: nomE = LimpiaNombre(inEmis)
-            If Len(nomE) = 0 Then nomE = "SinEmisor"
+            If Len(nomE) = 0 Then nomE = LimpiaNombre(inSect)
+            If Len(nomE) = 0 Then nomE = "SinNombre"
             Dim outPath As String
             outPath = carpeta & "Comparable_" & Format(Now, "yyyymmdd") & "_" & nomE & ".xlsx"
             Application.DisplayAlerts = False
@@ -81,19 +93,28 @@ fallo:
     MsgBox "ERROR: " & Err.Description, vbCritical, "Comparables"
 End Sub
 
+'------------------------------------------------------------------
 Private Sub BuscaNivel(dat As Variant, emis As String, sect As String, rating As String, _
-                       plazo As Double, tol As Double, ByRef res() As Variant, ByRef nRes As Long)
+                       plazo As Double, tol As Double, monto As Double, tolM As Double, _
+                       ByRef res() As Variant, ByRef nRes As Long)
     Dim i As Long, cnt As Long
     ReDim res(1 To 5000, 1 To 6)
     cnt = 0
     For i = 1 To UBound(dat, 1)
-        Dim okE As Boolean, okS As Boolean, okR As Boolean, okP As Boolean
-        okR = (UCase(Trim(CStr(dat(i, DB_RATING)))) = rating)
+        Dim okE As Boolean, okS As Boolean, okR As Boolean, okP As Boolean, okM As Boolean
+        okR = (Len(rating) = 0) Or (UCase(Trim(CStr(dat(i, DB_RATING)))) = rating)
         okP = IsNumeric(dat(i, DB_ANIOS))
         If okP Then okP = (Abs(CDbl(dat(i, DB_ANIOS)) - plazo) <= tol)
         okE = (Len(emis) = 0) Or (InStr(1, Trim(CStr(dat(i, DB_EMIS))), emis, vbTextCompare) > 0)
         okS = (Len(sect) = 0) Or (InStr(1, Trim(CStr(dat(i, DB_SECT))), sect, vbTextCompare) > 0)
-        If okR And okP And okE And okS Then
+        If tolM <= 0 Then
+            okM = True
+        ElseIf IsNumeric(dat(i, DB_OFERTA)) And monto > 0 Then
+            okM = (Abs(CDbl(dat(i, DB_OFERTA)) - monto) <= monto * tolM)
+        Else
+            okM = True
+        End If
+        If okR And okP And okE And okS And okM Then
             Dim sp As Double, hasSp As Boolean: hasSp = False
             If IsNumeric(dat(i, DB_TASA)) And IsNumeric(dat(i, DB_TBASE)) Then
                 sp = (CDbl(dat(i, DB_TASA)) - CDbl(dat(i, DB_TBASE))): hasSp = True
@@ -111,6 +132,7 @@ Private Sub BuscaNivel(dat As Variant, emis As String, sect As String, rating As
     nRes = cnt
 End Sub
 
+'------------------------------------------------------------------
 Private Sub EscribeResultados(ws As Worksheet, res As Variant, nRes As Long, _
                               nivel As String, tBaseHoy As Double)
     ws.Range("A13:H300").Clear
@@ -168,6 +190,7 @@ Private Sub EscribeResultados(ws As Worksheet, res As Variant, nRes As Long, _
     ws.Columns("A:F").AutoFit
 End Sub
 
+'------------------------------------------------------------------
 Private Function HojaComparables(wb As Workbook) As Worksheet
     Dim ws As Worksheet
     On Error Resume Next
@@ -181,16 +204,18 @@ Private Function HojaComparables(wb As Workbook) As Worksheet
         ws.Range("A3").Value = "INPUTS": ws.Range("A3").Font.Bold = True
         ws.Range("A4").Value = "Emisor:"
         ws.Range("A5").Value = "Sector:"
-        ws.Range("A6").Value = "Rating:"
-        ws.Range("A7").Value = "Plazo (años):"
-        ws.Range("A8").Value = "Monto (mn):"
+        ws.Range("A6").Value = "Rating (opcional):"
+        ws.Range("A7").Value = "Plazo (años) *:"
+        ws.Range("A8").Value = "Monto (mn) *:"
         ws.Range("A9").Value = "Tasa base hoy (%):"
         ws.Range("A10").Value = "Carpeta para guardar:"
+        ws.Range("A11").Value = "(* obligatorio; y al menos Sector o Emisor)"
         ws.Columns("A").AutoFit
     End If
     Set HojaComparables = ws
 End Function
 
+'------------------------------------------------------------------
 Private Function LimpiaNombre(s As String) As String
     Dim bad As Variant, x As Variant, t As String
     t = s
