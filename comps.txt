@@ -258,17 +258,18 @@ Private Sub EscribeResultados(ws As Worksheet, res As Variant, nRes As Long, niv
         ws.Cells(lr + 2, 2).NumberFormat = "0 ""pbs"""
         ws.Cells(lr + 3, 2).NumberFormat = "0.00%"
 
-        HeadRojo ws, 15, 1, 9
-        HeadRojo ws, baseR, 1, 3
-        HeadRojo ws, lr, 1, 3
+        HeadRojo ws, 15, 1, 9, False    ' encabezados de columna: NO fusionar
+        HeadRojo ws, baseR, 1, 3, True  ' título de bloque: fusiona
+        HeadRojo ws, lr, 1, 3, True     ' título de bloque: fusiona
     End If
     ws.Columns("A:I").AutoFit
 End Sub
 
 '------------------------------------------------------------------
-Private Sub HeadRojo(ws As Worksheet, ByVal fila As Long, ByVal colIni As Long, ByVal colFin As Long)
+Private Sub HeadRojo(ws As Worksheet, ByVal fila As Long, ByVal colIni As Long, ByVal colFin As Long, _
+                     Optional ByVal fusiona As Boolean = True)
     With ws.Range(ws.Cells(fila, colIni), ws.Cells(fila, colFin))
-        .Merge
+        If fusiona Then .Merge
         .Interior.Color = RGB(212, 12, 12)
         .Font.Color = RGB(255, 255, 255)
         .Font.Bold = True
@@ -328,7 +329,6 @@ Private Function HojaComparables(wb As Workbook) As Worksheet
     ws.Range("A9").Value = "Carpeta para guardar:"
     ws.Range("A11").Value = "(* obligatorio; y al menos Sector o Emisor)"
 
-    ' Título INPUTS en barra roja
     With ws.Range("A3:B3")
         .Merge
         .Interior.Color = RGB(212, 12, 12)
