@@ -1,0 +1,399 @@
+Option Explicit
+
+' === Columnas de la DB-Histórica CP (2) ===
+Private Const DB_EMISION As Long = 1   ' A = Fecha de emisión
+Private Const DB_VCTO As Long = 2, DB_EMIS As Long = 4, DB_SECT As Long = 7
+Private Const DB_RATING As Long = 12, DB_ANIOS As Long = 14
+Private Const DB_TASA As Long = 17, DB_TBASE As Long = 18
+Private Const DB_SPREAD_PBS As Long = 20   ' T = Spread en pbs
+Private Const DB_OFERTA As Long = 21       ' U = Oferta (monto)
+Private Const DB_HOJA As String = "DB-Histórica CP (2)"
+Private Const MAX_COMP As Long = 10
+Private Const ANIOS_ANTIG As Long = 3
+
+Sub BuscarComparables()
+    Dim wb As Workbook: Set wb = ThisWorkbook
+    Dim wsC As Worksheet, wsDB As Worksheet
+    On Error GoTo fallo
+
+    Set wsC = HojaComparables(wb)
+
+    Dim inEmis As String, inSect As String, inRating As String
+    Dim inPlazo As Double, inMonto As Double, carpeta As String, tasaProm As Double
+    inEmis = Trim(CStr(wsC.Range("B4").Value))
+    inSect = Trim(CStr(wsC.Range("B5").Value))
+    inRating = UCase(Trim(CStr(wsC.Range("B6").Value)))
+    inPlazo = Val(wsC.Range("B7").Value)
+    inMonto = Val(wsC.Range("B8").Value)
+    carpeta = Trim(CStr(wsC.Range("B9").Value))
+    tasaProm = Val(wsC.Range("B10").Value)
+
+    If inPlazo <= 0 Or inMonto <= 0 Then
+        MsgBox "Plazo (B7) y Monto (B8) son obligatorios.", vbExclamation: Exit Sub
+    End If
+    If Len(inEmis) = 0 And Len(inSect) = 0 Then
+        MsgBox "Pon al menos Sector (B5) o Emisor (B4).", vbExclamation: Exit Sub
+    End If
+
+    On Error Resume Next
+    Set wsDB = wb.Worksheets(DB_HOJA)
+    On Error GoTo fallo
+    If wsDB Is Nothing Then
+        MsgBox "No encuentro la hoja '" & DB_HOJA & "'.", vbCritical: Exit Sub
+    End If
+
+    Dim lastDB As Long: lastDB = wsDB.Cells(wsDB.Rows.Count, DB_EMIS).End(xlUp).Row
+    Dim dat As Variant
+    dat = wsDB.Range(wsDB.Cells(2, 1), wsDB.Cells(lastDB, DB_OFERTA)).Value
+
+    Dim res() As Variant, nRes As Long, nivel As String
+    ObtenerRankeados dat, inEmis, inSect, inRating, inPlazo, inMonto, res, nRes, nivel
+
+    EscribeResultados wsC, res, nRes, nivel, tasaProm
+
+    Dim saveMsg As String
+    If Len(carpeta) > 0 Then
+        If Right(carpeta, 1) <> "\" Then carpeta = carpeta & "\"
+        If Len(Dir(carpeta, vbDirectory)) > 0 Then
+            Dim nomE As String: nomE = LimpiaNombre(inEmis)
+            If Len(nomE) = 0 Then nomE = LimpiaNombre(inSect)
+            If Len(nomE) = 0 Then nomE = "SinNombre"
+            Dim outPath As String
+            outPath = carpeta & "Comparable_" & Format(Now, "yyyymmdd") & "_" & nomE & ".xlsx"
+            Application.DisplayAlerts = False
+            wsC.Copy
+            ActiveWorkbook.SaveAs Filename:=outPath, FileFormat:=51
+            ActiveWorkbook.Close SaveChanges:=False
+            Application.DisplayAlerts = True
+            saveMsg = vbCrLf & "Archivado: " & outPath
+        Else
+            saveMsg = vbCrLf & "Carpeta (B9) no existe: no se guardó copia."
+        End If
+    Else
+        saveMsg = vbCrLf & "Sin carpeta en B9: no se guardó copia."
+    End If
+
+    MsgBox "Comparables: " & nRes & vbCrLf & nivel & saveMsg, vbInformation, "Comparables"
+    Exit Sub
+fallo:
+    Application.DisplayAlerts = True
+    MsgBox "ERROR: " & Err.Description, vbCritical, "Comparables"
+End Sub
+
+'------------------------------------------------------------------
+Private Sub ObtenerRankeados(dat As Variant, emis As String, sect As String, rating As String, _
+                             plazo As Double, monto As Double, _
+                             ByRef res() As Variant, ByRef nRes As Long, ByRef nivel As String)
+    Dim tolP As Double, tolM As Double
+    tolP = 1#: tolM = 1#
+
+    Dim cand() As Variant, nc As Long
+    RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, tolM, cand, nc
+
+    If nc < 3 Then
+        RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, 0, cand, nc
+        nivel = "Filtro ampliado (sin monto) — " & nc & " candidatos (≤" & ANIOS_ANTIG & " años)"
+    Else
+        nivel = nc & " candidatos evaluados (≤" & ANIOS_ANTIG & " años)"
+    End If
+
+    If nc = 0 Then nRes = 0: Exit Sub
+
+    Dim fechaMax As Double, fechaMin As Double, i As Long
+    fechaMax = -1E+30: fechaMin = 1E+30
+    For i = 1 To nc
+        If IsDate(cand(i, 7)) Then
+            Dim f As Double: f = CDbl(CDate(cand(i, 7)))
+            If f > fechaMax Then fechaMax = f
+            If f < fechaMin Then fechaMin = f
+        End If
+    Next i
+
+    Dim score() As Double: ReDim score(1 To nc)
+    For i = 1 To nc
+        Dim pt As Double: pt = 0
+        If Len(emis) > 0 Then
+            If InStr(1, Trim(CStr(cand(i, 2))), emis, vbTextCompare) > 0 Then pt = pt + 100
+        End If
+        If IsNumeric(cand(i, 9)) And monto > 0 Then
+            Dim dm As Double: dm = Abs(CDbl(cand(i, 9)) - monto) / monto
+            If dm < 1 Then pt = pt + 60 * (1 - dm)
+        End If
+        If IsNumeric(cand(i, 3)) And plazo > 0 Then
+            Dim dp As Double: dp = Abs(CDbl(cand(i, 3)) - plazo) / plazo
+            If dp < 1 Then pt = pt + 40 * (1 - dp)
+        End If
+        If IsDate(cand(i, 7)) And fechaMax > fechaMin Then
+            pt = pt + 20 * ((CDbl(CDate(cand(i, 7))) - fechaMin) / (fechaMax - fechaMin))
+        End If
+        score(i) = pt
+    Next i
+
+    Dim a As Long, b As Long
+    For a = 1 To nc - 1
+        For b = a + 1 To nc
+            If score(b) > score(a) Then
+                Dim ts As Double: ts = score(a): score(a) = score(b): score(b) = ts
+                Dim c As Long, tmp As Variant
+                For c = 1 To 9
+                    tmp = cand(a, c): cand(a, c) = cand(b, c): cand(b, c) = tmp
+                Next c
+            End If
+        Next b
+    Next a
+
+    Dim take As Long: take = nc: If take > MAX_COMP Then take = MAX_COMP
+    ReDim res(1 To take, 1 To 10)
+    For i = 1 To take
+        For c = 1 To 9: res(i, c) = cand(i, c): Next c
+        res(i, 10) = score(i)
+    Next i
+    nRes = take
+End Sub
+
+'------------------------------------------------------------------
+Private Sub RecogeCandidatos(dat As Variant, emis As String, sect As String, rating As String, _
+                             plazo As Double, tolP As Double, monto As Double, tolM As Double, _
+                             ByRef cand() As Variant, ByRef nc As Long)
+    ReDim cand(1 To 5000, 1 To 9)
+    Dim i As Long, cnt As Long: cnt = 0
+    Dim limite As Date: limite = DateAdd("yyyy", -ANIOS_ANTIG, Date)
+    For i = 1 To UBound(dat, 1)
+        Dim okR As Boolean, okP As Boolean, okES As Boolean, okM As Boolean, okF As Boolean
+        okR = (Len(rating) = 0) Or (UCase(Trim(CStr(dat(i, DB_RATING)))) = rating)
+        okP = IsNumeric(dat(i, DB_ANIOS))
+        If okP Then okP = (Abs(CDbl(dat(i, DB_ANIOS)) - plazo) <= tolP)
+        Dim byE As Boolean, byS As Boolean
+        byE = (Len(emis) > 0) And (InStr(1, Trim(CStr(dat(i, DB_EMIS))), emis, vbTextCompare) > 0)
+        byS = (Len(sect) > 0) And (InStr(1, Trim(CStr(dat(i, DB_SECT))), sect, vbTextCompare) > 0)
+        okES = byE Or byS
+        If tolM <= 0 Then
+            okM = True
+        ElseIf IsNumeric(dat(i, DB_OFERTA)) And monto > 0 Then
+            okM = (Abs(CDbl(dat(i, DB_OFERTA)) - monto) <= monto * tolM)
+        Else
+            okM = True
+        End If
+        okF = False
+        If IsDate(dat(i, DB_EMISION)) Then okF = (CDate(dat(i, DB_EMISION)) >= limite)
+        If okR And okP And okES And okM And okF And IsNumeric(dat(i, DB_SPREAD_PBS)) Then
+            cnt = cnt + 1
+            cand(cnt, 1) = dat(i, DB_VCTO): cand(cnt, 2) = dat(i, DB_EMIS)
+            cand(cnt, 3) = dat(i, DB_ANIOS): cand(cnt, 4) = dat(i, DB_RATING)
+            cand(cnt, 5) = ANumTasa(dat(i, DB_TBASE)): cand(cnt, 6) = CDbl(dat(i, DB_SPREAD_PBS))
+            cand(cnt, 7) = dat(i, DB_EMISION)
+            cand(cnt, 8) = IIf(byE, "Emisor", "Sector")
+            cand(cnt, 9) = dat(i, DB_OFERTA)
+        End If
+    Next i
+    nc = cnt
+End Sub
+
+'------------------------------------------------------------------
+Private Sub EscribeResultados(ws As Worksheet, res As Variant, nRes As Long, nivel As String, _
+                              Optional ByVal tasaProm As Double = 0)
+    ws.Range("A13:K300").Clear
+    ws.Range("A13").Value = nivel: ws.Range("A13").Font.Bold = True
+
+    Dim hd As Variant, c As Long
+    hd = Array("Emisor", "Monto (mn)", "Plazo", "Rating", "Vcto", "Tasa base", "Spread (pbs)", "Origen", "Puntaje")
+    For c = 0 To UBound(hd): ws.Cells(15, c + 1).Value = hd(c): Next c
+
+    Dim r As Long, k As Long
+    r = 16
+    Dim spreads() As Double
+    If nRes > 0 Then ReDim spreads(1 To nRes)
+    Dim tBaseHoy As Double, fMax As Double, fEmi As Double
+    fMax = -1
+
+    For k = 1 To nRes
+        spreads(k) = CDbl(res(k, 6))
+        If IsNumeric(res(k, 5)) Then
+            fEmi = -1
+            If IsDate(res(k, 7)) Then fEmi = CDbl(CDate(res(k, 7)))
+            If fEmi > fMax Then fMax = fEmi: tBaseHoy = CDbl(res(k, 5))
+        End If
+        ws.Cells(r, 1).Value = res(k, 2)
+        If IsNumeric(res(k, 9)) Then ws.Cells(r, 2).Value = res(k, 9)
+        ws.Cells(r, 3).Value = res(k, 3)
+        ws.Cells(r, 4).Value = res(k, 4)
+        If IsDate(res(k, 1)) Then ws.Cells(r, 5).Value = CDate(res(k, 1))
+        If IsNumeric(res(k, 5)) Then ws.Cells(r, 6).Value = res(k, 5)
+        ws.Cells(r, 7).Value = res(k, 6)
+        ws.Cells(r, 8).Value = res(k, 8)
+        If IsNumeric(res(k, 10)) Then ws.Cells(r, 9).Value = Round(CDbl(res(k, 10)), 0)
+        r = r + 1
+    Next k
+    Dim ultComp As Long: ultComp = r - 1
+    ws.Range(ws.Cells(16, 2), ws.Cells(ultComp, 2)).NumberFormat = "#,##0.00"
+    ws.Range(ws.Cells(16, 6), ws.Cells(ultComp, 6)).NumberFormat = "0.00%"
+    ws.Range(ws.Cells(16, 7), ws.Cells(ultComp, 7)).NumberFormat = "0 ""pbs"""
+    ws.Range(ws.Cells(16, 9), ws.Cells(ultComp, 9)).NumberFormat = "0"
+    ws.Columns("E").NumberFormat = "dd/mm/yyyy"
+
+    Dim baseR As Long: baseR = r + 1
+    ws.Cells(baseR, 1).Value = "DISTRIBUCIÓN DEL SPREAD (pbs)"
+    If nRes > 0 Then
+        Dim wf As WorksheetFunction: Set wf = Application.WorksheetFunction
+        Dim medi As Double, q1 As Double, q3 As Double, mn As Double, mx As Double
+        mn = wf.Min(spreads): mx = wf.Max(spreads): medi = wf.Median(spreads)
+        q1 = wf.Quartile(spreads, 1): q3 = wf.Quartile(spreads, 3)
+        ws.Cells(baseR + 1, 1).Value = "Mínimo":  ws.Cells(baseR + 1, 2).Value = mn
+        ws.Cells(baseR + 2, 1).Value = "Q1":      ws.Cells(baseR + 2, 2).Value = q1
+        ws.Cells(baseR + 3, 1).Value = "Mediana": ws.Cells(baseR + 3, 2).Value = medi: ws.Cells(baseR + 3, 1).Font.Bold = True
+        ws.Cells(baseR + 4, 1).Value = "Q3":      ws.Cells(baseR + 4, 2).Value = q3
+        ws.Cells(baseR + 5, 1).Value = "Máximo":  ws.Cells(baseR + 5, 2).Value = mx
+        ws.Range(ws.Cells(baseR + 1, 2), ws.Cells(baseR + 5, 2)).NumberFormat = "0 ""pbs"""
+
+        Dim lr As Long: lr = baseR + 7
+        ws.Cells(lr, 1).Value = "LECTURA FINAL"
+        ws.Cells(lr + 1, 1).Value = "Tasa base (comp. más reciente):"
+        ws.Cells(lr + 1, 2).Value = tBaseHoy
+        If fMax > 0 Then ws.Cells(lr + 1, 3).Value = "emisión: " & Format(CDate(fMax), "dd/mm/yyyy")
+        ws.Cells(lr + 2, 1).Value = "Spread mediano:": ws.Cells(lr + 2, 2).Value = medi
+        ws.Cells(lr + 3, 1).Value = "TASA SUGERIDA:": ws.Cells(lr + 3, 1).Font.Bold = True
+        Dim tasaSug As Double: tasaSug = tBaseHoy + medi / 10000
+        ws.Cells(lr + 3, 2).Value = tasaSug
+        ws.Cells(lr + 3, 2).Font.Bold = True
+        ws.Cells(lr + 4, 1).Value = "Banda (Q1–Q3):"
+        ws.Cells(lr + 4, 2).Value = Format(tBaseHoy + q1 / 10000, "0.00%") & " – " & Format(tBaseHoy + q3 / 10000, "0.00%")
+        ws.Cells(lr + 1, 2).NumberFormat = "0.00%"
+        ws.Cells(lr + 2, 2).NumberFormat = "0 ""pbs"""
+        ws.Cells(lr + 3, 2).NumberFormat = "0.00%"
+
+        HeadRojo ws, 15, 1, 9, False
+        HeadRojo ws, baseR, 1, 3, True
+        HeadRojo ws, lr, 1, 3, True
+
+        ' --- CONCLUSIÓN: ¿Aporta valor? (bloque aparte, abajo) ---
+        Dim cr As Long: cr = lr + 6
+        ws.Cells(cr, 1).Value = "¿APORTA VALOR AL FONDO 0?"
+        ws.Cells(cr + 1, 1).Value = "Tasa sugerida:"
+        ws.Cells(cr + 1, 2).Value = tasaSug
+        ws.Cells(cr + 1, 2).NumberFormat = "0.00%"
+        ws.Cells(cr + 2, 1).Value = "Tasa prom. Fondo 0:"
+        ws.Cells(cr + 2, 2).Value = tasaProm
+        ws.Cells(cr + 2, 2).NumberFormat = "0.00%"
+        ws.Cells(cr + 3, 1).Value = "Resultado:": ws.Cells(cr + 3, 1).Font.Bold = True
+        If tasaProm > 0 Then
+            Dim difPbs As Double: difPbs = (tasaSug - tasaProm) * 10000
+            If tasaSug > tasaProm Then
+                ws.Cells(cr + 3, 2).Value = "APORTA  (+" & Format(difPbs, "0") & " pbs)"
+                ws.Cells(cr + 3, 2).Interior.Color = RGB(198, 239, 206)
+                ws.Cells(cr + 3, 2).Font.Color = RGB(0, 97, 0)
+            Else
+                ws.Cells(cr + 3, 2).Value = "NO APORTA  (" & Format(difPbs, "0") & " pbs)"
+                ws.Cells(cr + 3, 2).Interior.Color = RGB(255, 199, 206)
+                ws.Cells(cr + 3, 2).Font.Color = RGB(156, 0, 6)
+            End If
+            ws.Cells(cr + 3, 2).Font.Bold = True
+        Else
+            ws.Cells(cr + 3, 2).Value = "(escribe la tasa prom. en B10)"
+        End If
+        HeadRojo ws, cr, 1, 3, True
+    End If
+    ws.Columns("A").AutoFit
+    ws.Columns("C:I").AutoFit
+    ws.Columns("B").ColumnWidth = 14
+End Sub
+
+'------------------------------------------------------------------
+Private Sub HeadRojo(ws As Worksheet, ByVal fila As Long, ByVal colIni As Long, ByVal colFin As Long, _
+                     Optional ByVal fusiona As Boolean = True)
+    With ws.Range(ws.Cells(fila, colIni), ws.Cells(fila, colFin))
+        If fusiona Then .Merge
+        .Interior.Color = RGB(212, 12, 12)
+        .Font.Color = RGB(255, 255, 255)
+        .Font.Bold = True
+        .Font.Name = "Arial": .Font.Size = 8
+        .HorizontalAlignment = xlCenter
+    End With
+    Dim finBloque As Long: finBloque = fila
+    Dim rr As Long, ult As Long
+    ult = ws.Cells(ws.Rows.Count, colIni).End(xlUp).Row
+    For rr = fila + 1 To ult
+        If Len(Trim(CStr(ws.Cells(rr, colIni).Value))) = 0 Then Exit For
+        finBloque = rr
+    Next rr
+    If finBloque > fila Then
+        Dim rng As Range
+        Set rng = ws.Range(ws.Cells(fila, colIni), ws.Cells(finBloque, colFin))
+        With rng.Borders(xlEdgeTop): .LineStyle = xlContinuous: .Weight = xlThin: End With
+        With rng.Borders(xlEdgeBottom): .LineStyle = xlContinuous: .Weight = xlThin: End With
+        rng.Font.Name = "Arial"
+        ws.Range(ws.Cells(fila + 1, colIni), ws.Cells(finBloque, colFin)).Font.Size = 8
+    End If
+End Sub
+
+'------------------------------------------------------------------
+Private Function ANumTasa(v As Variant) As Variant
+    Dim s As String
+    If IsNumeric(v) Then ANumTasa = CDbl(v): Exit Function
+    s = Trim(CStr(v))
+    If Len(s) = 0 Then ANumTasa = "": Exit Function
+    Dim tienePct As Boolean: tienePct = (InStr(s, "%") > 0)
+    s = Replace(s, "%", ""): s = Replace(s, " ", ""): s = Replace(s, ",", ".")
+    If IsNumeric(s) Then
+        If tienePct Then ANumTasa = CDbl(s) / 100 Else ANumTasa = CDbl(s)
+    Else
+        ANumTasa = ""
+    End If
+End Function
+
+'------------------------------------------------------------------
+Private Function HojaComparables(wb As Workbook) As Worksheet
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = wb.Worksheets("Comparables")
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set ws = wb.Worksheets.Add(Before:=wb.Worksheets(1))
+        ws.Name = "Comparables"
+    End If
+    ws.Range("A1").Value = "BUSCADOR DE COMPARABLES — EMISIÓN NUEVA"
+    ws.Range("A1").Font.Bold = True
+    ws.Range("A3").Value = "INPUTS"
+    ws.Range("A4").Value = "Emisor:"
+    ws.Range("A5").Value = "Sector:"
+    ws.Range("A6").Value = "Rating (opcional):"
+    ws.Range("A7").Value = "Plazo (años) *:"
+    ws.Range("A8").Value = "Monto (mn) *:"
+    ws.Range("A9").Value = "Carpeta para guardar:"
+    ws.Range("A10").Value = "Tasa prom. Fondo 0 (%):"
+    ws.Range("A11").Value = "(* obligatorio; y al menos Sector o Emisor)"
+
+    With ws.Range("A3:B3")
+        .Merge
+        .Interior.Color = RGB(212, 12, 12)
+        .Font.Color = RGB(255, 255, 255)
+        .Font.Bold = True
+        .Font.Name = "Arial": .Font.Size = 8
+        .HorizontalAlignment = xlCenter
+    End With
+    With ws.Range("A4:A10")
+        .Font.Name = "Arial": .Font.Size = 8: .Font.Bold = True
+    End With
+    With ws.Range("B4:B10")
+        .Font.Name = "Arial": .Font.Size = 8
+        .Borders(xlEdgeBottom).LineStyle = xlContinuous
+        .Borders(xlEdgeBottom).Weight = xlHairline
+    End With
+    With ws.Range("A3:B10")
+        .Borders(xlEdgeTop).LineStyle = xlContinuous: .Borders(xlEdgeTop).Weight = xlThin
+        .Borders(xlEdgeBottom).LineStyle = xlContinuous: .Borders(xlEdgeBottom).Weight = xlThin
+    End With
+    ws.Range("B10").NumberFormat = "0.00%"
+    ws.Columns("A").AutoFit
+    ws.Columns("B").ColumnWidth = 14
+
+    Set HojaComparables = ws
+End Function
+
+'------------------------------------------------------------------
+Private Function LimpiaNombre(s As String) As String
+    Dim bad As Variant, x As Variant, t As String
+    t = s
+    bad = Array("\", "/", ":", "*", "?", """", "<", ">", "|", " ", ".")
+    For Each x In bad: t = Replace(t, x, "_"): Next x
+    LimpiaNombre = t
+End Function
