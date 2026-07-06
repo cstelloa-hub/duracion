@@ -316,18 +316,41 @@ Private Function HojaComparables(wb As Workbook) As Worksheet
     If ws Is Nothing Then
         Set ws = wb.Worksheets.Add(Before:=wb.Worksheets(1))
         ws.Name = "Comparables"
-        ws.Range("A1").Value = "BUSCADOR DE COMPARABLES — EMISIÓN NUEVA"
-        ws.Range("A1").Font.Bold = True
-        ws.Range("A3").Value = "INPUTS": ws.Range("A3").Font.Bold = True
-        ws.Range("A4").Value = "Emisor:"
-        ws.Range("A5").Value = "Sector:"
-        ws.Range("A6").Value = "Rating (opcional):"
-        ws.Range("A7").Value = "Plazo (años) *:"
-        ws.Range("A8").Value = "Monto (mn) *:"
-        ws.Range("A9").Value = "Carpeta para guardar:"
-        ws.Range("A11").Value = "(* obligatorio; y al menos Sector o Emisor)"
-        ws.Columns("A").AutoFit
     End If
+    ws.Range("A1").Value = "BUSCADOR DE COMPARABLES — EMISIÓN NUEVA"
+    ws.Range("A1").Font.Bold = True
+    ws.Range("A3").Value = "INPUTS"
+    ws.Range("A4").Value = "Emisor:"
+    ws.Range("A5").Value = "Sector:"
+    ws.Range("A6").Value = "Rating (opcional):"
+    ws.Range("A7").Value = "Plazo (años) *:"
+    ws.Range("A8").Value = "Monto (mn) *:"
+    ws.Range("A9").Value = "Carpeta para guardar:"
+    ws.Range("A11").Value = "(* obligatorio; y al menos Sector o Emisor)"
+
+    ' Título INPUTS en barra roja
+    With ws.Range("A3:B3")
+        .Merge
+        .Interior.Color = RGB(212, 12, 12)
+        .Font.Color = RGB(255, 255, 255)
+        .Font.Bold = True
+        .Font.Name = "Arial": .Font.Size = 8
+        .HorizontalAlignment = xlCenter
+    End With
+    With ws.Range("A4:A9")
+        .Font.Name = "Arial": .Font.Size = 8: .Font.Bold = True
+    End With
+    With ws.Range("B4:B9")
+        .Font.Name = "Arial": .Font.Size = 8
+        .Borders(xlEdgeBottom).LineStyle = xlContinuous
+        .Borders(xlEdgeBottom).Weight = xlHairline
+    End With
+    With ws.Range("A3:B9")
+        .Borders(xlEdgeTop).LineStyle = xlContinuous: .Borders(xlEdgeTop).Weight = xlThin
+        .Borders(xlEdgeBottom).LineStyle = xlContinuous: .Borders(xlEdgeBottom).Weight = xlThin
+    End With
+    ws.Columns("A").AutoFit
+
     Set HojaComparables = ws
 End Function
 
