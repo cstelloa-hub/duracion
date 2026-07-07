@@ -9,7 +9,6 @@ Private Const DB_SPREAD_PBS As Long = 20   ' T = Spread en pbs
 Private Const DB_OFERTA As Long = 21       ' U = Oferta (monto)
 Private Const DB_HOJA As String = "DB-Histórica CP (2)"
 Private Const MAX_COMP As Long = 10
-Private Const ANIOS_ANTIG As Long = 3
 
 Sub BuscarComparables()
     Dim wb As Workbook: Set wb = ThisWorkbook
@@ -84,19 +83,27 @@ End Sub
 Private Sub ObtenerRankeados(dat As Variant, emis As String, sect As String, rating As String, _
                              plazo As Double, monto As Double, _
                              ByRef res() As Variant, ByRef nRes As Long, ByRef nivel As String)
-    Dim tolP As Double, tolM As Double
-    tolP = 1#: tolM = 1#
-
+    Dim tolP As Double: tolP = 1#
     Dim cand() As Variant, nc As Long
-    RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, tolM, cand, nc
+    Dim antig As String
 
+    ' Cascada de antigüedad: 3 -> 5 -> sin límite -> sin límite y sin monto
+    RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, 1#, 3, cand, nc
+    antig = "≤3 años"
     If nc < 3 Then
-        RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, 0, cand, nc
-        nivel = "Filtro ampliado (sin monto) — " & nc & " candidatos (≤" & ANIOS_ANTIG & " años)"
-    Else
-        nivel = nc & " candidatos evaluados (≤" & ANIOS_ANTIG & " años)"
+        RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, 1#, 5, cand, nc
+        antig = "≤5 años"
+    End If
+    If nc < 3 Then
+        RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, 1#, 0, cand, nc
+        antig = "sin límite de antigüedad"
+    End If
+    If nc < 3 Then
+        RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, 0, 0, cand, nc
+        antig = "sin límite, sin filtro monto"
     End If
 
+    nivel = nc & " candidatos evaluados (" & antig & ")"
     If nc = 0 Then nRes = 0: Exit Sub
 
     Dim fechaMax As Double, fechaMin As Double, i As Long
@@ -154,10 +161,13 @@ End Sub
 '------------------------------------------------------------------
 Private Sub RecogeCandidatos(dat As Variant, emis As String, sect As String, rating As String, _
                              plazo As Double, tolP As Double, monto As Double, tolM As Double, _
+                             ByVal aniosAntig As Long, _
                              ByRef cand() As Variant, ByRef nc As Long)
     ReDim cand(1 To 5000, 1 To 9)
     Dim i As Long, cnt As Long: cnt = 0
-    Dim limite As Date: limite = DateAdd("yyyy", -ANIOS_ANTIG, Date)
+    Dim limite As Date, usaLimite As Boolean
+    usaLimite = (aniosAntig > 0)
+    If usaLimite Then limite = DateAdd("yyyy", -aniosAntig, Date)
     For i = 1 To UBound(dat, 1)
         Dim okR As Boolean, okP As Boolean, okES As Boolean, okM As Boolean, okF As Boolean
         okR = (Len(rating) = 0) Or (UCase(Trim(CStr(dat(i, DB_RATING)))) = rating)
@@ -174,8 +184,13 @@ Private Sub RecogeCandidatos(dat As Variant, emis As String, sect As String, rat
         Else
             okM = True
         End If
-        okF = False
-        If IsDate(dat(i, DB_EMISION)) Then okF = (CDate(dat(i, DB_EMISION)) >= limite)
+        If Not usaLimite Then
+            okF = True
+        ElseIf IsDate(dat(i, DB_EMISION)) Then
+            okF = (CDate(dat(i, DB_EMISION)) >= limite)
+        Else
+            okF = False
+        End If
         If okR And okP And okES And okM And okF And IsNumeric(dat(i, DB_SPREAD_PBS)) Then
             cnt = cnt + 1
             cand(cnt, 1) = dat(i, DB_VCTO): cand(cnt, 2) = dat(i, DB_EMIS)
@@ -265,7 +280,7 @@ Private Sub EscribeResultados(ws As Worksheet, res As Variant, nRes As Long, niv
         HeadRojo ws, baseR, 1, 3, True
         HeadRojo ws, lr, 1, 3, True
 
-        ' --- CONCLUSIÓN: ¿Aporta valor? (bloque aparte, abajo) ---
+        ' --- CONCLUSIÓN: ¿Aporta valor? ---
         Dim cr As Long: cr = lr + 6
         ws.Cells(cr, 1).Value = "¿APORTA VALOR AL FONDO 0?"
         ws.Cells(cr + 1, 1).Value = "Tasa sugerida:"
