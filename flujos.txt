@@ -5,85 +5,198 @@ Private Sub GenerarFlujos(wb As Workbook)
     On Error GoTo 0
     If wsB Is Nothing Then Exit Sub
 
-    ' Acumula Val_total por semana (clave = lunes de la semana, aaaammdd)
-    Dim d As Object: Set d = CreateObject("Scripting.Dictionary")
-    Dim last As Long: last = wsB.Cells(wsB.Rows.Count, 8).End(xlUp).Row   ' H = Vcto
-    Dim i As Long, vcto As Variant, monto As Double, lun As Date, clave As String
+    Dim last As Long: last = wsB.Cells(wsB.Rows.Count, 8).End(xlUp).Row
+    Dim i As Long
+
+    Dim dAnio As Object: Set dAnio = CreateObject("Scripting.Dictionary")
+    Dim dMes As Object: Set dMes = CreateObject("Scripting.Dictionary")
+    Dim setAC As Object: Set setAC = CreateObject("Scripting.Dictionary")
+    Dim setAnio As Object: Set setAnio = CreateObject("Scripting.Dictionary")
+    Dim setMes As Object: Set setMes = CreateObject("Scripting.Dictionary")
+
     For i = B_DAT To last
-        vcto = wsB.Cells(i, 8).Value
-        monto = 0
-        If IsNumeric(wsB.Cells(i, 7).Value) Then monto = CDbl(wsB.Cells(i, 7).Value)   ' G = Monto (mn)
-        If IsDate(vcto) Then
-            lun = CDate(vcto) - (Weekday(CDate(vcto), vbMonday) - 1)
-            clave = Format(lun, "yyyymmdd")
-            If d.Exists(clave) Then d(clave) = d(clave) + monto Else d(clave) = monto
+        Dim vcto As Variant: vcto = wsB.Cells(i, 8).Value
+        Dim ac As String: ac = Trim(CStr(wsB.Cells(i, 1).Value))
+        Dim monto As Double: monto = 0
+        If IsNumeric(wsB.Cells(i, 7).Value) Then monto = CDbl(wsB.Cells(i, 7).Value)
+        If IsDate(vcto) And Len(ac) > 0 Then
+            Dim aa As String: aa = CStr(Year(CDate(vcto)))
+            Dim am As String: am = Format(CDate(vcto), "yyyymm")
+            If Not setAC.Exists(ac) Then setAC(ac) = True
+            If Not setAnio.Exists(aa) Then setAnio(aa) = True
+            If Not setMes.Exists(am) Then setMes(am) = True
+            If Not dAnio.Exists(aa) Then Set dAnio(aa) = CreateObject("Scripting.Dictionary")
+            If dAnio(aa).Exists(ac) Then dAnio(aa)(ac) = dAnio(aa)(ac) + monto Else dAnio(aa)(ac) = monto
+            If Not dMes.Exists(am) Then Set dMes(am) = CreateObject("Scripting.Dictionary")
+            If dMes(am).Exists(ac) Then dMes(am)(ac) = dMes(am)(ac) + monto Else dMes(am)(ac) = monto
         End If
     Next i
 
-    Set wsF = HojaFija(wb, "Flujos F0")
-    wsF.Range("A1").Value = "FLUJOS POR SEMANA DE VENCIMIENTO (Val_total, mn)"
-    wsF.Range("A1").Font.Bold = True
-    Dim hf As Variant, c As Long
-    hf = Array("Mes", "Sem", "Semana (lun–dom)", "Monto (mn)", "Distribución", "% del total", "Acum. (mn)")
-    For c = 0 To UBound(hf): wsF.Cells(3, c + 1).Value = hf(c): Next c
-    wsF.Range(wsF.Cells(3, 1), wsF.Cells(3, 7)).Font.Bold = True
+    Dim aClases() As String: aClases = OrdenaClaves(setAC, False)
+    Dim aAnios() As String: aAnios = OrdenaClaves(setAnio, False)
+    Dim aMeses() As String: aMeses = OrdenaClaves(setMes, False)
 
+    Set wsF = HojaFija(wb, "Flujos F0")
+    Application.DisplayAlerts = False
+    Dim ch As ChartObject
+    For Each ch In wsF.ChartObjects: ch.Delete: Next ch
+    Application.DisplayAlerts = True
+
+    wsF.Range("A1").Value = "FLUJOS DE VENCIMIENTO POR ASSET CLASS (Val_total, mn)"
+    wsF.Range("A1").Font.Bold = True
+
+    ' ===== CUADRO 1: ANUAL =====
+    Dim r0 As Long: r0 = 3
+    wsF.Cells(r0, 1).Value = "Cuadro 1 — Por año y Asset Class (mn)"
+    wsF.Cells(r0, 1).Font.Bold = True
+    Dim hr As Long: hr = r0 + 1
+    Dim finAnual As Long
+    finAnual = EscribeMatriz(wsF, hr, aClases, aAnios, dAnio, False)
+
+    Dim gAnualTop As Long: gAnualTop = finAnual + 2
+    CrearGraficoApilado wsF, hr, finAnual, 1, UBound(aAnios) + 2, _
+                        "Vencimientos por año — Asset Class", gAnualTop
+
+    ' ===== CUADRO 2: MENSUAL =====
+    Dim r2 As Long: r2 = gAnualTop + 16
+    wsF.Cells(r2, 1).Value = "Cuadro 2 — Por mes y Asset Class (mn)"
+    wsF.Cells(r2, 1).Font.Bold = True
+    Dim hr2 As Long: hr2 = r2 + 1
+    Dim finMens As Long
+    finMens = EscribeMatriz(wsF, hr2, aClases, aMeses, dMes, True)
+
+    Dim gMensTop As Long: gMensTop = finMens + 2
+    CrearGraficoApilado wsF, hr2, finMens, 1, UBound(aMeses) + 2, _
+                        "Vencimientos por mes — Asset Class", gMensTop
+
+    wsF.Columns("A").ColumnWidth = 24
+End Sub
+
+'------------------------------------------------------------------
+Private Function EscribeMatriz(ws As Worksheet, hr As Long, aClases() As String, _
+                               aPer() As String, dPer As Object, _
+                               Optional periodoEsMes As Boolean = False) As Long
+    Dim c As Long, r As Long, j As Long
+    ws.Cells(hr, 1).Value = "Asset Class"
+    For c = 0 To UBound(aPer)
+        If periodoEsMes Then
+            ws.Cells(hr, c + 2).Value = MesCorto(aPer(c))
+        Else
+            ws.Cells(hr, c + 2).Value = aPer(c)
+        End If
+    Next c
+
+    r = hr + 1
+    For j = 0 To UBound(aClases)
+        ws.Cells(r, 1).Value = aClases(j)
+        For c = 0 To UBound(aPer)
+            Dim v As Double: v = 0
+            If dPer.Exists(aPer(c)) Then
+                If dPer(aPer(c)).Exists(aClases(j)) Then v = dPer(aPer(c))(aClases(j))
+            End If
+            ws.Cells(r, c + 2).Value = v
+        Next c
+        r = r + 1
+    Next j
+
+    ws.Cells(r, 1).Value = "TOTAL": ws.Cells(r, 1).Font.Bold = True
+    For c = 0 To UBound(aPer)
+        Dim tot As Double: tot = 0
+        For j = 0 To UBound(aClases)
+            tot = tot + ws.Cells(hr + 1 + j, c + 2).Value
+        Next j
+        ws.Cells(r, c + 2).Value = tot
+        ws.Cells(r, c + 2).Font.Bold = True
+    Next c
+    ws.Range(ws.Cells(hr + 1, 2), ws.Cells(r, UBound(aPer) + 2)).NumberFormat = "#,##0.00"
+
+    With ws.Range(ws.Cells(hr, 1), ws.Cells(hr, UBound(aPer) + 2))
+        .Interior.Color = RGB(212, 12, 12)
+        .Font.Color = RGB(255, 255, 255)
+        .Font.Bold = True
+        .Font.Name = "Arial": .Font.Size = 8
+        .HorizontalAlignment = xlCenter
+    End With
+    With ws.Range(ws.Cells(hr, 1), ws.Cells(r, UBound(aPer) + 2))
+        .Borders(xlEdgeTop).LineStyle = xlContinuous: .Borders(xlEdgeTop).Weight = xlThin
+        .Borders(xlEdgeBottom).LineStyle = xlContinuous: .Borders(xlEdgeBottom).Weight = xlThin
+        .Font.Name = "Arial": .Font.Size = 8
+    End With
+    EscribeMatriz = r
+End Function
+
+'------------------------------------------------------------------
+Private Sub CrearGraficoApilado(ws As Worksheet, hr As Long, filaTotal As Long, _
+                                colIni As Long, colFin As Long, titulo As String, filaTop As Long)
+    Dim rngDatos As Range
+    Set rngDatos = ws.Range(ws.Cells(hr, colIni), ws.Cells(filaTotal - 1, colFin))
+
+    Dim izq As Double: izq = ws.Cells(filaTop, 1).Left
+    Dim arr As Double: arr = ws.Cells(filaTop, 1).Top
+    Dim co As ChartObject
+    Set co = ws.ChartObjects.Add(Left:=izq, Top:=arr, Width:=460, Height:=220)
+
+    Dim pal(0 To 5) As Long
+    pal(0) = RGB(212, 12, 12)
+    pal(1) = RGB(89, 89, 89)
+    pal(2) = RGB(192, 80, 77)
+    pal(3) = RGB(150, 150, 150)
+    pal(4) = RGB(120, 30, 30)
+    pal(5) = RGB(191, 168, 128)
+
+    With co.Chart
+        .ChartType = xlColumnStacked
+        .SetSourceData Source:=rngDatos, PlotBy:=xlColumns
+        .HasTitle = True
+        .ChartTitle.Text = titulo
+        .ChartTitle.Font.Size = 10
+        .ChartTitle.Font.Name = "Arial"
+        On Error Resume Next
+        .ApplyDataLabels Type:=xlDataLabelsShowNone
+        On Error GoTo 0
+        .ChartGroups(1).GapWidth = 60
+
+        Dim s As Long
+        For s = 1 To .SeriesCollection.Count
+            .SeriesCollection(s).Format.Fill.ForeColor.RGB = pal((s - 1) Mod 6)
+            .SeriesCollection(s).Format.Line.ForeColor.RGB = RGB(255, 255, 255)
+            .SeriesCollection(s).Format.Line.Weight = 0.75
+        Next s
+
+        On Error Resume Next
+        .Axes(xlCategory).TickLabels.Font.Name = "Arial"
+        .Axes(xlCategory).TickLabels.Font.Size = 8
+        .Axes(xlValue).TickLabels.Font.Name = "Arial"
+        .Axes(xlValue).TickLabels.Font.Size = 8
+        .Legend.Font.Name = "Arial"
+        .Legend.Font.Size = 8
+        .Legend.Position = xlLegendPositionBottom
+        On Error GoTo 0
+    End With
+End Sub
+
+'------------------------------------------------------------------
+Private Function OrdenaClaves(d As Object, desc As Boolean) As String()
     Dim n As Long: n = d.Count
-    If n = 0 Then Exit Sub
-    Dim claves() As String: ReDim claves(1 To n)
-    Dim k As Variant, j As Long: j = 0
-    For Each k In d.Keys
-        j = j + 1: claves(j) = CStr(k)
-    Next k
+    Dim arr() As String
+    If n = 0 Then ReDim arr(0 To 0): OrdenaClaves = arr: Exit Function
+    ReDim arr(0 To n - 1)
+    Dim k As Variant, i As Long: i = 0
+    For Each k In d.Keys: arr(i) = CStr(k): i = i + 1: Next k
     Dim a As Long, b As Long, tmp As String
-    For a = 1 To n - 1
-        For b = a + 1 To n
-            If claves(b) < claves(a) Then tmp = claves(a): claves(a) = claves(b): claves(b) = tmp
+    For a = 0 To n - 2
+        For b = a + 1 To n - 1
+            Dim swap As Boolean
+            If desc Then swap = (arr(b) > arr(a)) Else swap = (arr(b) < arr(a))
+            If swap Then tmp = arr(a): arr(a) = arr(b): arr(b) = tmp
         Next b
     Next a
+    OrdenaClaves = arr
+End Function
 
-    Dim total As Double
-    For a = 1 To n: total = total + d(claves(a)): Next a
-
-    Dim r As Long, lunD As Date, domD As Date, acum As Double, mesPrev As String, mesAct As String
-    r = 4: acum = 0: mesPrev = ""
-    For a = 1 To n
-        lunD = DateSerial(CInt(Left(claves(a), 4)), CInt(Mid(claves(a), 5, 2)), CInt(Right(claves(a), 2)))
-        domD = lunD + 6
-        mesAct = Format(lunD, "mmm-yyyy")
-        acum = acum + d(claves(a))
-        If mesAct <> mesPrev Then wsF.Cells(r, 1).Value = mesAct
-        mesPrev = mesAct
-        wsF.Cells(r, 2).Value = a
-        wsF.Cells(r, 3).Value = Format(lunD, "dd/mm/yy") & " – " & Format(domD, "dd/mm/yy")
-        wsF.Cells(r, 4).Value = d(claves(a))
-        wsF.Cells(r, 5).Value = d(claves(a))                 ' col E = base de la barra (mismo monto)
-        If total <> 0 Then wsF.Cells(r, 6).Value = d(claves(a)) / total
-        wsF.Cells(r, 7).Value = acum
-        r = r + 1
-    Next a
-    Dim filaTot As Long: filaTot = r
-    wsF.Cells(r, 1).Value = "TOTAL": wsF.Cells(r, 1).Font.Bold = True
-    wsF.Cells(r, 4).Value = total: wsF.Cells(r, 4).Font.Bold = True
-    If total <> 0 Then wsF.Cells(r, 6).Value = 1: wsF.Cells(r, 6).Font.Bold = True
-
-    ' Barras de datos en la columna E (solo las filas de datos)
-    On Error Resume Next
-    Dim rngBar As Range
-    Set rngBar = wsF.Range(wsF.Cells(4, 5), wsF.Cells(filaTot - 1, 5))
-    rngBar.FormatConditions.Delete
-    Dim db As Databar
-    Set db = rngBar.FormatConditions.AddDatabar
-    db.BarColor.Color = RGB(99, 153, 34)        ' verde
-    db.BarFillType = xlDataBarFillSolid
-    db.ShowValue = False                         ' oculta el número, deja solo la barra
-    On Error GoTo 0
-
-    wsF.Columns("D").NumberFormat = "#,##0.00"
-    wsF.Columns("F").NumberFormat = "0.0%"
-    wsF.Columns("G").NumberFormat = "#,##0.00"
-    wsF.Columns("E").ColumnWidth = 18
-    wsF.Columns("A:D").AutoFit
-    wsF.Columns("F:G").AutoFit
-    FormatoInstitucional wsF, 3, 1, 7
-End Sub
+'------------------------------------------------------------------
+Private Function MesCorto(aaaamm As String) As String
+    Dim aa As Integer, mm As Integer
+    aa = CInt(Left(aaaamm, 4)): mm = CInt(Right(aaaamm, 2))
+    MesCorto = Format(DateSerial(aa, mm, 1), "mmm-yy")
+End Function
