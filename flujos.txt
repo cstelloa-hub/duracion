@@ -10,29 +10,32 @@ Private Sub GenerarFlujos(wb As Workbook)
 
     Dim dAnio As Object: Set dAnio = CreateObject("Scripting.Dictionary")
     Dim dMes As Object: Set dMes = CreateObject("Scripting.Dictionary")
-    Dim setAC As Object: Set setAC = CreateObject("Scripting.Dictionary")
     Dim setAnio As Object: Set setAnio = CreateObject("Scripting.Dictionary")
     Dim setMes As Object: Set setMes = CreateObject("Scripting.Dictionary")
 
+    Dim aClases(0 To 2) As String
+    aClases(0) = "Bonos"
+    aClases(1) = "Depósitos a Plazo"
+    aClases(2) = "Papeles Comerciales"
+
     For i = B_DAT To last
         Dim vcto As Variant: vcto = wsB.Cells(i, 8).Value
-        Dim ac As String: ac = Trim(CStr(wsB.Cells(i, 1).Value))
+        Dim acRaw As String: acRaw = Trim(CStr(wsB.Cells(i, 1).Value))
+        Dim grp As String: grp = GrupoAC(acRaw)
         Dim monto As Double: monto = 0
         If IsNumeric(wsB.Cells(i, 7).Value) Then monto = CDbl(wsB.Cells(i, 7).Value)
-        If IsDate(vcto) And Len(ac) > 0 Then
+        If IsDate(vcto) And Len(grp) > 0 Then
             Dim aa As String: aa = CStr(Year(CDate(vcto)))
             Dim am As String: am = Format(CDate(vcto), "yyyymm")
-            If Not setAC.Exists(ac) Then setAC(ac) = True
             If Not setAnio.Exists(aa) Then setAnio(aa) = True
             If Not setMes.Exists(am) Then setMes(am) = True
             If Not dAnio.Exists(aa) Then Set dAnio(aa) = CreateObject("Scripting.Dictionary")
-            If dAnio(aa).Exists(ac) Then dAnio(aa)(ac) = dAnio(aa)(ac) + monto Else dAnio(aa)(ac) = monto
+            If dAnio(aa).Exists(grp) Then dAnio(aa)(grp) = dAnio(aa)(grp) + monto Else dAnio(aa)(grp) = monto
             If Not dMes.Exists(am) Then Set dMes(am) = CreateObject("Scripting.Dictionary")
-            If dMes(am).Exists(ac) Then dMes(am)(ac) = dMes(am)(ac) + monto Else dMes(am)(ac) = monto
+            If dMes(am).Exists(grp) Then dMes(am)(grp) = dMes(am)(grp) + monto Else dMes(am)(grp) = monto
         End If
     Next i
 
-    Dim aClases() As String: aClases = OrdenaClaves(setAC, False)
     Dim aAnios() As String: aAnios = OrdenaClaves(setAnio, False)
     Dim aMeses() As String: aMeses = OrdenaClaves(setMes, False)
 
@@ -73,6 +76,26 @@ Private Sub GenerarFlujos(wb As Workbook)
 End Sub
 
 '------------------------------------------------------------------
+Private Function GrupoAC(ByVal ac As String) As String
+    Dim s As String: s = LCase(Trim(ac))
+    Select Case s
+        Case "bonos de gobierno central de la república", _
+             "bonos de empresas privadas", _
+             "otros bonos del sistema financiero", _
+             "títulos con derecho crediticio"
+            GrupoAC = "Bonos"
+        Case "depósitos a plazo"
+            GrupoAC = "Depósitos a Plazo"
+        Case "cd seriados subastado bancos", _
+             "papeles comerciales", _
+             "papeles comerciales titulizados"
+            GrupoAC = "Papeles Comerciales"
+        Case Else
+            GrupoAC = "OTRO: " & ac
+    End Select
+End Function
+
+'------------------------------------------------------------------
 Private Function EscribeMatriz(ws As Worksheet, hr As Long, aClases() As String, _
                                aPer() As String, dPer As Object, _
                                Optional periodoEsMes As Boolean = False) As Long
@@ -82,7 +105,7 @@ Private Function EscribeMatriz(ws As Worksheet, hr As Long, aClases() As String,
         If periodoEsMes Then
             ws.Cells(hr, c + 2).Value = MesCorto(aPer(c))
         Else
-            ws.Cells(hr, c + 2).Value = aPer(c)
+            ws.Cells(hr, c + 2).Value = "'" & aPer(c)
         End If
     Next c
 
@@ -136,17 +159,14 @@ Private Sub CrearGraficoApilado(ws As Worksheet, hr As Long, filaTotal As Long, 
     Dim co As ChartObject
     Set co = ws.ChartObjects.Add(Left:=izq, Top:=arr, Width:=460, Height:=220)
 
-    Dim pal(0 To 5) As Long
+    Dim pal(0 To 2) As Long
     pal(0) = RGB(212, 12, 12)
     pal(1) = RGB(89, 89, 89)
-    pal(2) = RGB(192, 80, 77)
-    pal(3) = RGB(150, 150, 150)
-    pal(4) = RGB(120, 30, 30)
-    pal(5) = RGB(191, 168, 128)
+    pal(2) = RGB(191, 168, 128)
 
     With co.Chart
         .ChartType = xlColumnStacked
-        .SetSourceData Source:=rngDatos, PlotBy:=xlColumns
+        .SetSourceData Source:=rngDatos, PlotBy:=xlRows
         .HasTitle = True
         .ChartTitle.Text = titulo
         .ChartTitle.Font.Size = 10
@@ -158,7 +178,7 @@ Private Sub CrearGraficoApilado(ws As Worksheet, hr As Long, filaTotal As Long, 
 
         Dim s As Long
         For s = 1 To .SeriesCollection.Count
-            .SeriesCollection(s).Format.Fill.ForeColor.RGB = pal((s - 1) Mod 6)
+            .SeriesCollection(s).Format.Fill.ForeColor.RGB = pal((s - 1) Mod 3)
             .SeriesCollection(s).Format.Line.ForeColor.RGB = RGB(255, 255, 255)
             .SeriesCollection(s).Format.Line.Weight = 0.75
         Next s
