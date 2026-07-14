@@ -9,7 +9,6 @@ Private Const DB_SPREAD_PBS As Long = 20   ' T = Spread en pbs
 Private Const DB_OFERTA As Long = 21       ' U = Oferta (monto)
 Private Const DB_HOJA As String = "DB-Histórica CP (2)"
 Private Const MAX_COMP As Long = 10
-Private Const ANIOS_ANTIG As Long = 3
 
 Sub BuscarComparables()
     Dim wb As Workbook: Set wb = ThisWorkbook
@@ -20,12 +19,15 @@ Sub BuscarComparables()
 
     Dim inEmis As String, inSect As String, inRating As String
     Dim inPlazo As Double, inMonto As Double, carpeta As String
+    Dim tasaProm As Double, tasaBaseInput As Double
     inEmis = Trim(CStr(wsC.Range("B4").Value))
     inSect = Trim(CStr(wsC.Range("B5").Value))
     inRating = UCase(Trim(CStr(wsC.Range("B6").Value)))
     inPlazo = Val(wsC.Range("B7").Value)
     inMonto = Val(wsC.Range("B8").Value)
     carpeta = Trim(CStr(wsC.Range("B9").Value))
+    tasaProm = Val(wsC.Range("B10").Value)
+    tasaBaseInput = Val(wsC.Range("B11").Value)
 
     If inPlazo <= 0 Or inMonto <= 0 Then
         MsgBox "Plazo (B7) y Monto (B8) son obligatorios.", vbExclamation: Exit Sub
@@ -48,7 +50,7 @@ Sub BuscarComparables()
     Dim res() As Variant, nRes As Long, nivel As String
     ObtenerRankeados dat, inEmis, inSect, inRating, inPlazo, inMonto, res, nRes, nivel
 
-    EscribeResultados wsC, res, nRes, nivel
+    EscribeResultados wsC, res, nRes, nivel, tasaProm, tasaBaseInput
 
     Dim saveMsg As String
     If Len(carpeta) > 0 Then
@@ -83,19 +85,26 @@ End Sub
 Private Sub ObtenerRankeados(dat As Variant, emis As String, sect As String, rating As String, _
                              plazo As Double, monto As Double, _
                              ByRef res() As Variant, ByRef nRes As Long, ByRef nivel As String)
-    Dim tolP As Double, tolM As Double
-    tolP = 1#: tolM = 1#
-
+    Dim tolP As Double: tolP = 1#
     Dim cand() As Variant, nc As Long
-    RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, tolM, cand, nc
+    Dim antig As String
 
+    RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, 1#, 3, cand, nc
+    antig = "≤3 años"
     If nc < 3 Then
-        RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, 0, cand, nc
-        nivel = "Filtro ampliado (sin monto) — " & nc & " candidatos (≤" & ANIOS_ANTIG & " años)"
-    Else
-        nivel = nc & " candidatos evaluados (≤" & ANIOS_ANTIG & " años)"
+        RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, 1#, 5, cand, nc
+        antig = "≤5 años"
+    End If
+    If nc < 3 Then
+        RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, 1#, 0, cand, nc
+        antig = "sin límite de antigüedad"
+    End If
+    If nc < 3 Then
+        RecogeCandidatos dat, emis, sect, rating, plazo, tolP, monto, 0, 0, cand, nc
+        antig = "sin límite, sin filtro monto"
     End If
 
+    nivel = nc & " candidatos evaluados (" & antig & ")"
     If nc = 0 Then nRes = 0: Exit Sub
 
     Dim fechaMax As Double, fechaMin As Double, i As Long
@@ -153,10 +162,13 @@ End Sub
 '------------------------------------------------------------------
 Private Sub RecogeCandidatos(dat As Variant, emis As String, sect As String, rating As String, _
                              plazo As Double, tolP As Double, monto As Double, tolM As Double, _
+                             ByVal aniosAntig As Long, _
                              ByRef cand() As Variant, ByRef nc As Long)
     ReDim cand(1 To 5000, 1 To 9)
     Dim i As Long, cnt As Long: cnt = 0
-    Dim limite As Date: limite = DateAdd("yyyy", -ANIOS_ANTIG, Date)
+    Dim limite As Date, usaLimite As Boolean
+    usaLimite = (aniosAntig > 0)
+    If usaLimite Then limite = DateAdd("yyyy", -aniosAntig, Date)
     For i = 1 To UBound(dat, 1)
         Dim okR As Boolean, okP As Boolean, okES As Boolean, okM As Boolean, okF As Boolean
         okR = (Len(rating) = 0) Or (UCase(Trim(CStr(dat(i, DB_RATING)))) = rating)
@@ -173,8 +185,13 @@ Private Sub RecogeCandidatos(dat As Variant, emis As String, sect As String, rat
         Else
             okM = True
         End If
-        okF = False
-        If IsDate(dat(i, DB_EMISION)) Then okF = (CDate(dat(i, DB_EMISION)) >= limite)
+        If Not usaLimite Then
+            okF = True
+        ElseIf IsDate(dat(i, DB_EMISION)) Then
+            okF = (CDate(dat(i, DB_EMISION)) >= limite)
+        Else
+            okF = False
+        End If
         If okR And okP And okES And okM And okF And IsNumeric(dat(i, DB_SPREAD_PBS)) Then
             cnt = cnt + 1
             cand(cnt, 1) = dat(i, DB_VCTO): cand(cnt, 2) = dat(i, DB_EMIS)
@@ -189,16 +206,18 @@ Private Sub RecogeCandidatos(dat As Variant, emis As String, sect As String, rat
 End Sub
 
 '------------------------------------------------------------------
-Private Sub EscribeResultados(ws As Worksheet, res As Variant, nRes As Long, nivel As String)
-    ws.Range("A13:K300").Clear
-    ws.Range("A13").Value = nivel: ws.Range("A13").Font.Bold = True
+Private Sub EscribeResultados(ws As Worksheet, res As Variant, nRes As Long, nivel As String, _
+                              Optional ByVal tasaProm As Double = 0, _
+                              Optional ByVal tasaBaseInput As Double = 0)
+    ws.Range("A14:K300").Clear
+    ws.Range("A14").Value = nivel: ws.Range("A14").Font.Bold = True
 
     Dim hd As Variant, c As Long
     hd = Array("Emisor", "Monto (mn)", "Plazo", "Rating", "Vcto", "Tasa base", "Spread (pbs)", "Origen", "Puntaje")
-    For c = 0 To UBound(hd): ws.Cells(15, c + 1).Value = hd(c): Next c
+    For c = 0 To UBound(hd): ws.Cells(16, c + 1).Value = hd(c): Next c
 
     Dim r As Long, k As Long
-    r = 16
+    r = 17
     Dim spreads() As Double
     If nRes > 0 Then ReDim spreads(1 To nRes)
     Dim tBaseHoy As Double, fMax As Double, fEmi As Double
@@ -223,10 +242,10 @@ Private Sub EscribeResultados(ws As Worksheet, res As Variant, nRes As Long, niv
         r = r + 1
     Next k
     Dim ultComp As Long: ultComp = r - 1
-    ws.Range(ws.Cells(16, 2), ws.Cells(ultComp, 2)).NumberFormat = "#,##0.00"
-    ws.Range(ws.Cells(16, 6), ws.Cells(ultComp, 6)).NumberFormat = "0.00%"
-    ws.Range(ws.Cells(16, 7), ws.Cells(ultComp, 7)).NumberFormat = "0 ""pbs"""
-    ws.Range(ws.Cells(16, 9), ws.Cells(ultComp, 9)).NumberFormat = "0"
+    ws.Range(ws.Cells(17, 2), ws.Cells(ultComp, 2)).NumberFormat = "#,##0.00"
+    ws.Range(ws.Cells(17, 6), ws.Cells(ultComp, 6)).NumberFormat = "0.00%"
+    ws.Range(ws.Cells(17, 7), ws.Cells(ultComp, 7)).NumberFormat = "0 ""pbs"""
+    ws.Range(ws.Cells(17, 9), ws.Cells(ultComp, 9)).NumberFormat = "0"
     ws.Columns("E").NumberFormat = "dd/mm/yyyy"
 
     Dim baseR As Long: baseR = r + 1
@@ -243,26 +262,66 @@ Private Sub EscribeResultados(ws As Worksheet, res As Variant, nRes As Long, niv
         ws.Cells(baseR + 5, 1).Value = "Máximo":  ws.Cells(baseR + 5, 2).Value = mx
         ws.Range(ws.Cells(baseR + 1, 2), ws.Cells(baseR + 5, 2)).NumberFormat = "0 ""pbs"""
 
+        ' Tasa base: input BCRP (B11) manda; si vacío, usa la del comparable más reciente
+        Dim tBaseUsar As Double, origenBase As String
+        If tasaBaseInput > 0 Then
+            tBaseUsar = tasaBaseInput: origenBase = "BCRP (input)"
+        Else
+            tBaseUsar = tBaseHoy
+            origenBase = "comp. más reciente"
+            If fMax > 0 Then origenBase = origenBase & " " & Format(CDate(fMax), "dd/mm/yyyy")
+        End If
+
         Dim lr As Long: lr = baseR + 7
         ws.Cells(lr, 1).Value = "LECTURA FINAL"
-        ws.Cells(lr + 1, 1).Value = "Tasa base (comp. más reciente):"
-        ws.Cells(lr + 1, 2).Value = tBaseHoy
-        If fMax > 0 Then ws.Cells(lr + 1, 3).Value = "emisión: " & Format(CDate(fMax), "dd/mm/yyyy")
+        ws.Cells(lr + 1, 1).Value = "Tasa base:"
+        ws.Cells(lr + 1, 2).Value = tBaseUsar
+        ws.Cells(lr + 1, 3).Value = origenBase
         ws.Cells(lr + 2, 1).Value = "Spread mediano:": ws.Cells(lr + 2, 2).Value = medi
         ws.Cells(lr + 3, 1).Value = "TASA SUGERIDA:": ws.Cells(lr + 3, 1).Font.Bold = True
-        ws.Cells(lr + 3, 2).Value = tBaseHoy + medi / 10000
+        Dim tasaSug As Double: tasaSug = tBaseUsar + medi / 10000
+        ws.Cells(lr + 3, 2).Value = tasaSug
         ws.Cells(lr + 3, 2).Font.Bold = True
         ws.Cells(lr + 4, 1).Value = "Banda (Q1–Q3):"
-        ws.Cells(lr + 4, 2).Value = Format(tBaseHoy + q1 / 10000, "0.00%") & " – " & Format(tBaseHoy + q3 / 10000, "0.00%")
+        ws.Cells(lr + 4, 2).Value = Format(tBaseUsar + q1 / 10000, "0.00%") & " – " & Format(tBaseUsar + q3 / 10000, "0.00%")
         ws.Cells(lr + 1, 2).NumberFormat = "0.00%"
         ws.Cells(lr + 2, 2).NumberFormat = "0 ""pbs"""
         ws.Cells(lr + 3, 2).NumberFormat = "0.00%"
 
-        HeadRojo ws, 15, 1, 9, False    ' encabezados de columna: NO fusionar
-        HeadRojo ws, baseR, 1, 3, True  ' título de bloque: fusiona
-        HeadRojo ws, lr, 1, 3, True     ' título de bloque: fusiona
+        HeadRojo ws, 16, 1, 9, False
+        HeadRojo ws, baseR, 1, 3, True
+        HeadRojo ws, lr, 1, 3, True
+
+        ' --- CONCLUSIÓN: ¿Aporta valor? ---
+        Dim cr As Long: cr = lr + 6
+        ws.Cells(cr, 1).Value = "¿APORTA VALOR AL FONDO 0?"
+        ws.Cells(cr + 1, 1).Value = "Tasa sugerida:"
+        ws.Cells(cr + 1, 2).Value = tasaSug
+        ws.Cells(cr + 1, 2).NumberFormat = "0.00%"
+        ws.Cells(cr + 2, 1).Value = "Tasa prom. Fondo 0:"
+        ws.Cells(cr + 2, 2).Value = tasaProm
+        ws.Cells(cr + 2, 2).NumberFormat = "0.00%"
+        ws.Cells(cr + 3, 1).Value = "Resultado:": ws.Cells(cr + 3, 1).Font.Bold = True
+        If tasaProm > 0 Then
+            Dim difPbs As Double: difPbs = (tasaSug - tasaProm) * 10000
+            If tasaSug > tasaProm Then
+                ws.Cells(cr + 3, 2).Value = "APORTA  (+" & Format(difPbs, "0") & " pbs)"
+                ws.Cells(cr + 3, 2).Interior.Color = RGB(198, 239, 206)
+                ws.Cells(cr + 3, 2).Font.Color = RGB(0, 97, 0)
+            Else
+                ws.Cells(cr + 3, 2).Value = "NO APORTA  (" & Format(difPbs, "0") & " pbs)"
+                ws.Cells(cr + 3, 2).Interior.Color = RGB(255, 199, 206)
+                ws.Cells(cr + 3, 2).Font.Color = RGB(156, 0, 6)
+            End If
+            ws.Cells(cr + 3, 2).Font.Bold = True
+        Else
+            ws.Cells(cr + 3, 2).Value = "(escribe la tasa prom. en B10)"
+        End If
+        HeadRojo ws, cr, 1, 3, True
     End If
-    ws.Columns("A:I").AutoFit
+    ws.Columns("A").AutoFit
+    ws.Columns("C:I").AutoFit
+    ws.Columns("B").ColumnWidth = 14
 End Sub
 
 '------------------------------------------------------------------
@@ -327,7 +386,9 @@ Private Function HojaComparables(wb As Workbook) As Worksheet
     ws.Range("A7").Value = "Plazo (años) *:"
     ws.Range("A8").Value = "Monto (mn) *:"
     ws.Range("A9").Value = "Carpeta para guardar:"
-    ws.Range("A11").Value = "(* obligatorio; y al menos Sector o Emisor)"
+    ws.Range("A10").Value = "Tasa prom. Fondo 0 (%):"
+    ws.Range("A11").Value = "Tasa base BCRP (%):"
+    ws.Range("A12").Value = "(* obligatorio; y al menos Sector o Emisor)"
 
     With ws.Range("A3:B3")
         .Merge
@@ -337,19 +398,22 @@ Private Function HojaComparables(wb As Workbook) As Worksheet
         .Font.Name = "Arial": .Font.Size = 8
         .HorizontalAlignment = xlCenter
     End With
-    With ws.Range("A4:A9")
+    With ws.Range("A4:A11")
         .Font.Name = "Arial": .Font.Size = 8: .Font.Bold = True
     End With
-    With ws.Range("B4:B9")
+    With ws.Range("B4:B11")
         .Font.Name = "Arial": .Font.Size = 8
         .Borders(xlEdgeBottom).LineStyle = xlContinuous
         .Borders(xlEdgeBottom).Weight = xlHairline
     End With
-    With ws.Range("A3:B9")
+    With ws.Range("A3:B11")
         .Borders(xlEdgeTop).LineStyle = xlContinuous: .Borders(xlEdgeTop).Weight = xlThin
         .Borders(xlEdgeBottom).LineStyle = xlContinuous: .Borders(xlEdgeBottom).Weight = xlThin
     End With
+    ws.Range("B10").NumberFormat = "0.00%"
+    ws.Range("B11").NumberFormat = "0.00%"
     ws.Columns("A").AutoFit
+    ws.Columns("B").ColumnWidth = 14
 
     Set HojaComparables = ws
 End Function
