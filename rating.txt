@@ -1,18 +1,26 @@
 '==================================================================
 ' Crea la hoja "Rating F0" solo con las tablas de referencia
 Private Sub CrearHojaRating(wb As Workbook)
-    Dim ws As Worksheet: Set ws = HojaFija(wb, "Rating F0")
-    ws.Range("A1").Value = "METODOLOGÍA DE CALIFICACIÓN — FONDO 0"
+    Dim ws As Worksheet
+    Set ws = HojaFija(wb, "Rating F0")
+    ws.Range("A1").Value = "METODOLOGIA DE CALIFICACION - FONDO 0"
     ws.Range("A1").Font.Bold = True
 
     ws.Range("A3").Value = "CORTO PLAZO"
-    ws.Range("A4").Value = "Rating": ws.Range("B4").Value = "Nota"
-    ws.Range("A5").Value = "CPL 1+": ws.Range("B5").Value = 10
-    ws.Range("A6").Value = "CPL 1":  ws.Range("B6").Value = 7
-    ws.Range("A7").Value = "CPL 1-": ws.Range("B7").Value = 4
+    ws.Range("A4").Value = "Rating"
+    ws.Range("B4").Value = "Nota"
+    ws.Range("A5").Value = "CPL 1+"
+    ws.Range("B5").Value = 10
+    ws.Range("A6").Value = "CPL 1"
+    ws.Range("B6").Value = 7
+    ws.Range("A7").Value = "CPL 1-"
+    ws.Range("B7").Value = 4
 
     ws.Range("D3").Value = "LARGO PLAZO"
-    ws.Range("D4").Value = "Internacional": ws.Range("E4").Value = "Perú LP": ws.Range("F4").Value = "Nota"
+    ws.Range("D4").Value = "Internacional"
+    ws.Range("E4").Value = "Peru LP"
+    ws.Range("F4").Value = "Nota"
+
     Dim t As Variant, i As Long
     t = Array( _
         Array("BBB-", "Soberanos", 10), _
@@ -28,23 +36,27 @@ Private Sub CrearHojaRating(wb As Workbook)
         ws.Cells(5 + i, 6).Value = t(i)(2)
     Next i
 
-    FormatoHeadRating ws, "A3:B3": FormatoHeadRating ws, "A4:B4"
-    FormatoHeadRating ws, "D3:F3": FormatoHeadRating ws, "D4:F4"
+    FormatoHeadRating ws, "A3:B3"
+    FormatoHeadRating ws, "A4:B4"
+    FormatoHeadRating ws, "D3:F3"
+    FormatoHeadRating ws, "D4:F4"
     ws.Columns("A:F").AutoFit
 End Sub
 
 '------------------------------------------------------------------
-Private Sub FormatoHeadRating(ws As Worksheet, dir As String)
-    With ws.Range(dir)
+Private Sub FormatoHeadRating(ws As Worksheet, direccion As String)
+    With ws.Range(direccion)
         .Interior.Color = RGB(212, 12, 12)
         .Font.Color = RGB(255, 255, 255)
-        .Font.Bold = True: .Font.Name = "Arial": .Font.Size = 8
+        .Font.Bold = True
+        .Font.Name = "Arial"
+        .Font.Size = 8
         .HorizontalAlignment = xlCenter
     End With
 End Sub
 
 '==================================================================
-' Escribe los 2 ratings ponderados (D9 corto, fila insertada largo) y tabla detalle abajo
+' Escribe los 2 ratings ponderados (D9 corto, fila 10 largo) y tabla detalle abajo
 Private Sub CalcularRatingEnCalculo(wb As Workbook)
     Dim wsB As Worksheet, wsK As Worksheet
     On Error Resume Next
@@ -53,32 +65,46 @@ Private Sub CalcularRatingEnCalculo(wb As Workbook)
     On Error GoTo 0
     If wsB Is Nothing Or wsK Is Nothing Then Exit Sub
 
-    Dim last As Long: last = wsB.Cells(wsB.Rows.Count, 8).End(xlUp).Row
+    Dim last As Long
+    last = wsB.Cells(wsB.Rows.Count, 8).End(xlUp).Row
     Dim i As Long
 
     Dim sumNMc As Double, sumMc As Double, sumNMl As Double, sumMl As Double
 
     Dim nemos() As String, rInt() As String, rLoc() As String, esc() As String
     Dim notas() As Double, montos() As Double, nDatos As Long
-    ReDim nemos(1 To 5000): ReDim rInt(1 To 5000): ReDim rLoc(1 To 5000)
-    ReDim esc(1 To 5000): ReDim notas(1 To 5000): ReDim montos(1 To 5000)
+    ReDim nemos(1 To 5000)
+    ReDim rInt(1 To 5000)
+    ReDim rLoc(1 To 5000)
+    ReDim esc(1 To 5000)
+    ReDim notas(1 To 5000)
+    ReDim montos(1 To 5000)
     nDatos = 0
 
     For i = B_DAT To last
-        Dim rating As String: rating = Trim(CStr(wsB.Cells(i, 12).Value))  ' L = Rating internacional
-        Dim nemo As String: nemo = Trim(CStr(wsB.Cells(i, 1).Value))
-        Dim monto As Double: monto = 0
+        Dim rating As String
+        rating = Trim(CStr(wsB.Cells(i, 12).Value))
+        Dim nemo As String
+        nemo = Trim(CStr(wsB.Cells(i, 1).Value))
+        Dim monto As Double
+        monto = 0
         If IsNumeric(wsB.Cells(i, 7).Value) Then monto = CDbl(wsB.Cells(i, 7).Value)
-        Dim escala As String, nota As Double, local As String
-        NotaRating rating, escala, nota, local
+        Dim escala As String, nota As Double, locRat As String
+        NotaRating rating, escala, nota, locRat
         If escala <> "" And monto > 0 Then
             nDatos = nDatos + 1
-            nemos(nDatos) = nemo: rInt(nDatos) = rating: rLoc(nDatos) = local
-            esc(nDatos) = escala: notas(nDatos) = nota: montos(nDatos) = monto
+            nemos(nDatos) = nemo
+            rInt(nDatos) = rating
+            rLoc(nDatos) = locRat
+            esc(nDatos) = escala
+            notas(nDatos) = nota
+            montos(nDatos) = monto
             If escala = "Corto" Then
-                sumNMc = sumNMc + nota * monto: sumMc = sumMc + monto
+                sumNMc = sumNMc + nota * monto
+                sumMc = sumMc + monto
             Else
-                sumNMl = sumNMl + nota * monto: sumMl = sumMl + monto
+                sumNMl = sumNMl + nota * monto
+                sumMl = sumMl + monto
             End If
         End If
     Next i
@@ -87,16 +113,19 @@ Private Sub CalcularRatingEnCalculo(wb As Workbook)
     If sumMc > 0 Then pc = sumNMc / sumMc
     If sumMl > 0 Then pl = sumNMl / sumMl
 
-    ' --- Corto en la fila 9 (etiqueta ya existe) ---
-    wsK.Range("D9").Value = pc: wsK.Range("D9").NumberFormat = "0.00"
+    ' Corto en la fila 9
+    wsK.Range("D9").Value = pc
+    wsK.Range("D9").NumberFormat = "0.00"
     wsK.Range("E9").Value = EquivCorto(pc)
 
-    ' --- Largo: si la fila ya existe la actualiza, si no la inserta en la 10 ---
-    Dim filaLargo As Long: filaLargo = 0
+    ' Largo: actualiza si existe, si no inserta en la fila 10
+    Dim filaLargo As Long
+    filaLargo = 0
     Dim f As Long
     For f = 1 To 30
         If InStr(1, CStr(wsK.Cells(f, 1).Value), "Rating ponderado Largo", vbTextCompare) > 0 Then
-            filaLargo = f: Exit For
+            filaLargo = f
+            Exit For
         End If
     Next f
     If filaLargo = 0 Then
@@ -108,27 +137,30 @@ Private Sub CalcularRatingEnCalculo(wb As Workbook)
     wsK.Cells(filaLargo, 4).NumberFormat = "0.00"
     wsK.Cells(filaLargo, 5).Value = EquivLargo(pl)
 
-    ' --- Tabla detalle al final ---
-    ' Borra un detalle anterior si existe (para no acumular al correr varias veces)
+    ' Tabla detalle al final (limpia anterior si existe)
     Dim busca As Range
-    Set busca = wsK.Columns(1).Find("DETALLE CALIFICACIÓN POR INSTRUMENTO", LookIn:=xlValues, LookAt:=xlWhole)
+    Set busca = wsK.Columns(1).Find("DETALLE CALIFICACION POR INSTRUMENTO", LookIn:=xlValues, LookAt:=xlWhole)
     If Not busca Is Nothing Then
         wsK.Range(wsK.Rows(busca.Row), wsK.Rows(wsK.Rows.Count)).ClearContents
     End If
 
-    Dim r0 As Long: r0 = wsK.Cells(wsK.Rows.Count, 1).End(xlUp).Row + 3
-    wsK.Cells(r0, 1).Value = "DETALLE CALIFICACIÓN POR INSTRUMENTO"
+    Dim r0 As Long
+    r0 = wsK.Cells(wsK.Rows.Count, 1).End(xlUp).Row + 3
+    wsK.Cells(r0, 1).Value = "DETALLE CALIFICACION POR INSTRUMENTO"
     wsK.Cells(r0, 1).Font.Bold = True
-    Dim hr As Long: hr = r0 + 1
+
+    Dim hr As Long
+    hr = r0 + 1
     wsK.Cells(hr, 1).Value = "Instrumento"
     wsK.Cells(hr, 2).Value = "Rating int."
     wsK.Cells(hr, 3).Value = "Rating local"
     wsK.Cells(hr, 4).Value = "Escala"
     wsK.Cells(hr, 5).Value = "Nota"
     wsK.Cells(hr, 6).Value = "Monto (mn)"
-    wsK.Cells(hr, 7).Value = "Nota × Monto"
+    wsK.Cells(hr, 7).Value = "Nota x Monto"
 
-    Dim r As Long: r = hr + 1
+    Dim r As Long
+    r = hr + 1
     For i = 1 To nDatos
         wsK.Cells(r, 1).Value = nemos(i)
         wsK.Cells(r, 2).Value = rInt(i)
@@ -142,40 +174,69 @@ Private Sub CalcularRatingEnCalculo(wb As Workbook)
     wsK.Range(wsK.Cells(hr + 1, 6), wsK.Cells(r - 1, 7)).NumberFormat = "#,##0.00"
 
     With wsK.Range(wsK.Cells(hr, 1), wsK.Cells(hr, 7))
-        .Interior.Color = RGB(212, 12, 12): .Font.Color = RGB(255, 255, 255)
-        .Font.Bold = True: .Font.Name = "Arial": .Font.Size = 8
+        .Interior.Color = RGB(212, 12, 12)
+        .Font.Color = RGB(255, 255, 255)
+        .Font.Bold = True
+        .Font.Name = "Arial"
+        .Font.Size = 8
     End With
-    wsK.Range(wsK.Cells(hr, 1), wsK.Cells(r - 1, 7)).Font.Name = "Arial"
-    wsK.Range(wsK.Cells(hr, 1), wsK.Cells(r - 1, 7)).Font.Size = 8
 End Sub
 
 '------------------------------------------------------------------
 ' Rating internacional -> escala, nota y rating local
 Private Sub NotaRating(ByVal rating As String, ByRef escala As String, ByRef nota As Double, _
-                       ByRef local As String)
-    Dim s As String: s = UCase(Trim(rating))
-    escala = "": nota = 0: local = ""
+                       ByRef locRat As String)
+    Dim s As String
+    s = UCase(Trim(rating))
+    escala = ""
+    nota = 0
+    locRat = ""
     If Left(s, 3) = "CPL" Then
         escala = "Corto"
-        Dim c As String: c = Replace(Trim(Mid(s, 4)), " ", "")
+        Dim c As String
+        c = Replace(Trim(Mid(s, 4)), " ", "")
         Select Case c
-            Case "1+": nota = 10: local = "CPL 1+"
-            Case "1":  nota = 7:  local = "CPL 1"
-            Case "1-": nota = 4:  local = "CPL 1-"
+            Case "1+"
+                nota = 10
+                locRat = "CPL 1+"
+            Case "1"
+                nota = 7
+                locRat = "CPL 1"
+            Case "1-"
+                nota = 4
+                locRat = "CPL 1-"
         End Select
     ElseIf Left(s, 3) = "LPI" Or Left(s, 2) = "LP" Then
         escala = "Largo"
         Dim x As String
-        If Left(s, 3) = "LPI" Then x = Trim(Mid(s, 4)) Else x = Trim(Mid(s, 3))
+        If Left(s, 3) = "LPI" Then
+            x = Trim(Mid(s, 4))
+        Else
+            x = Trim(Mid(s, 3))
+        End If
         x = Replace(x, " ", "")
         Select Case x
-            Case "BBB-": nota = 10: local = "Soberanos"
-            Case "BB+":  nota = 7:  local = "AAA"
-            Case "BB":   nota = 6:  local = "AA+/AA"
-            Case "BB-":  nota = 5:  local = "AA-"
-            Case "B+":   nota = 4:  local = "A+"
-            Case "B":    nota = 3:  local = "A/A-"
-            Case "B-":   nota = 2:  local = "BBB+/BBB"
+            Case "BBB-"
+                nota = 10
+                locRat = "Soberanos"
+            Case "BB+"
+                nota = 7
+                locRat = "AAA"
+            Case "BB"
+                nota = 6
+                locRat = "AA+/AA"
+            Case "BB-"
+                nota = 5
+                locRat = "AA-"
+            Case "B+"
+                nota = 4
+                locRat = "A+"
+            Case "B"
+                nota = 3
+                locRat = "A/A-"
+            Case "B-"
+                nota = 2
+                locRat = "BBB+/BBB"
         End Select
     End If
 End Sub
@@ -183,7 +244,9 @@ End Sub
 '------------------------------------------------------------------
 Private Function EquivCorto(v As Double) As String
     Dim d10 As Double, d7 As Double, d4 As Double
-    d10 = Abs(v - 10): d7 = Abs(v - 7): d4 = Abs(v - 4)
+    d10 = Abs(v - 10)
+    d7 = Abs(v - 7)
+    d4 = Abs(v - 4)
     If d10 <= d7 And d10 <= d4 Then
         EquivCorto = "CPL 1+"
     ElseIf d7 <= d4 Then
@@ -195,13 +258,17 @@ End Function
 
 '------------------------------------------------------------------
 Private Function EquivLargo(v As Double) As String
-    Dim notas As Variant, locales As Variant
-    notas = Array(10, 7, 6, 5, 4, 3, 2)
-    locales = Array("Soberanos", "AAA", "AA+/AA", "AA-", "A+", "A/A-", "BBB+/BBB")
+    Dim notasArr As Variant, localesArr As Variant
+    notasArr = Array(10, 7, 6, 5, 4, 3, 2)
+    localesArr = Array("Soberanos", "AAA", "AA+/AA", "AA-", "A+", "A/A-", "BBB+/BBB")
     Dim mejor As Long, dmin As Double, i As Long
-    mejor = 0: dmin = 1E+30
-    For i = 0 To UBound(notas)
-        If Abs(v - notas(i)) < dmin Then dmin = Abs(v - notas(i)): mejor = i
+    mejor = 0
+    dmin = 1E+30
+    For i = 0 To UBound(notasArr)
+        If Abs(v - notasArr(i)) < dmin Then
+            dmin = Abs(v - notasArr(i))
+            mejor = i
+        End If
     Next i
-    EquivLargo = locales(mejor)
+    EquivLargo = localesArr(mejor)
 End Function
