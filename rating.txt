@@ -16,30 +16,27 @@ Private Sub CrearHojaRating(wb As Workbook)
     ws.Range("A7").Value = "CPL 1-"
     ws.Range("B7").Value = 4
 
-    ws.Range("D3").Value = "LARGO PLAZO"
-    ws.Range("D4").Value = "Internacional"
-    ws.Range("E4").Value = "Peru LP"
-    ws.Range("F4").Value = "Nota"
-
+    ws.Range("D3").Value = "LARGO PLAZO (local)"
+    ws.Range("D4").Value = "Rating local"
+    ws.Range("E4").Value = "Nota"
     Dim t As Variant, i As Long
     t = Array( _
-        Array("BBB-", "Soberanos", 10), _
-        Array("BB+", "AAA", 7), _
-        Array("BB", "AA+/AA", 6), _
-        Array("BB-", "AA-", 5), _
-        Array("B+", "A+", 4), _
-        Array("B", "A/A-", 3), _
-        Array("B-", "BBB+/BBB", 2))
+        Array("Soberanos", 10), _
+        Array("AAA", 7), _
+        Array("AA+/AA", 6), _
+        Array("AA-", 5), _
+        Array("A+", 4), _
+        Array("A/A-", 3), _
+        Array("BBB+/BBB", 2))
     For i = 0 To UBound(t)
         ws.Cells(5 + i, 4).Value = t(i)(0)
         ws.Cells(5 + i, 5).Value = t(i)(1)
-        ws.Cells(5 + i, 6).Value = t(i)(2)
     Next i
 
     FormatoHeadRating ws, "A3:B3"
     FormatoHeadRating ws, "A4:B4"
-    FormatoHeadRating ws, "D3:F3"
-    FormatoHeadRating ws, "D4:F4"
+    FormatoHeadRating ws, "D3:E3"
+    FormatoHeadRating ws, "D4:E4"
     ws.Columns("A:F").AutoFit
 End Sub
 
@@ -71,10 +68,9 @@ Private Sub CalcularRatingEnCalculo(wb As Workbook)
 
     Dim sumNMc As Double, sumMc As Double, sumNMl As Double, sumMl As Double
 
-    Dim nemos() As String, rInt() As String, rLoc() As String, esc() As String
+    Dim nemos() As String, rLoc() As String, esc() As String
     Dim notas() As Double, montos() As Double, nDatos As Long
     ReDim nemos(1 To 5000)
-    ReDim rInt(1 To 5000)
     ReDim rLoc(1 To 5000)
     ReDim esc(1 To 5000)
     ReDim notas(1 To 5000)
@@ -94,7 +90,6 @@ Private Sub CalcularRatingEnCalculo(wb As Workbook)
         If escala <> "" And monto > 0 Then
             nDatos = nDatos + 1
             nemos(nDatos) = nemo
-            rInt(nDatos) = rating
             rLoc(nDatos) = locRat
             esc(nDatos) = escala
             notas(nDatos) = nota
@@ -152,28 +147,26 @@ Private Sub CalcularRatingEnCalculo(wb As Workbook)
     Dim hr As Long
     hr = r0 + 1
     wsK.Cells(hr, 1).Value = "Instrumento"
-    wsK.Cells(hr, 2).Value = "Rating int."
-    wsK.Cells(hr, 3).Value = "Rating local"
-    wsK.Cells(hr, 4).Value = "Escala"
-    wsK.Cells(hr, 5).Value = "Nota"
-    wsK.Cells(hr, 6).Value = "Monto (mn)"
-    wsK.Cells(hr, 7).Value = "Nota x Monto"
+    wsK.Cells(hr, 2).Value = "Rating local"
+    wsK.Cells(hr, 3).Value = "Escala"
+    wsK.Cells(hr, 4).Value = "Nota"
+    wsK.Cells(hr, 5).Value = "Monto (mn)"
+    wsK.Cells(hr, 6).Value = "Nota x Monto"
 
     Dim r As Long
     r = hr + 1
     For i = 1 To nDatos
         wsK.Cells(r, 1).Value = nemos(i)
-        wsK.Cells(r, 2).Value = rInt(i)
-        wsK.Cells(r, 3).Value = rLoc(i)
-        wsK.Cells(r, 4).Value = esc(i)
-        wsK.Cells(r, 5).Value = notas(i)
-        wsK.Cells(r, 6).Value = montos(i)
-        wsK.Cells(r, 7).Value = notas(i) * montos(i)
+        wsK.Cells(r, 2).Value = rLoc(i)
+        wsK.Cells(r, 3).Value = esc(i)
+        wsK.Cells(r, 4).Value = notas(i)
+        wsK.Cells(r, 5).Value = montos(i)
+        wsK.Cells(r, 6).Value = notas(i) * montos(i)
         r = r + 1
     Next i
-    wsK.Range(wsK.Cells(hr + 1, 6), wsK.Cells(r - 1, 7)).NumberFormat = "#,##0.00"
+    wsK.Range(wsK.Cells(hr + 1, 5), wsK.Cells(r - 1, 6)).NumberFormat = "#,##0.00"
 
-    With wsK.Range(wsK.Cells(hr, 1), wsK.Cells(hr, 7))
+    With wsK.Range(wsK.Cells(hr, 1), wsK.Cells(hr, 6))
         .Interior.Color = RGB(212, 12, 12)
         .Font.Color = RGB(255, 255, 255)
         .Font.Bold = True
@@ -183,7 +176,7 @@ Private Sub CalcularRatingEnCalculo(wb As Workbook)
 End Sub
 
 '------------------------------------------------------------------
-' Rating internacional -> escala, nota y rating local
+' Rating LOCAL (de la Base) -> escala y nota
 Private Sub NotaRating(ByVal rating As String, ByRef escala As String, ByRef nota As Double, _
                        ByRef locRat As String)
     Dim s As String
@@ -216,25 +209,25 @@ Private Sub NotaRating(ByVal rating As String, ByRef escala As String, ByRef not
         End If
         x = Replace(x, " ", "")
         Select Case x
-            Case "BBB-"
+            Case "SOBERANOS", "SOBERANO"
                 nota = 10
                 locRat = "Soberanos"
-            Case "BB+"
+            Case "AAA"
                 nota = 7
                 locRat = "AAA"
-            Case "BB"
+            Case "AA+", "AA"
                 nota = 6
                 locRat = "AA+/AA"
-            Case "BB-"
+            Case "AA-"
                 nota = 5
                 locRat = "AA-"
-            Case "B+"
+            Case "A+"
                 nota = 4
                 locRat = "A+"
-            Case "B"
+            Case "A", "A-"
                 nota = 3
                 locRat = "A/A-"
-            Case "B-"
+            Case "BBB+", "BBB"
                 nota = 2
                 locRat = "BBB+/BBB"
         End Select
