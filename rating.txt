@@ -21,7 +21,7 @@ Private Sub CrearHojaRating(wb As Workbook)
     ws.Range("E4").Value = "Nota"
     Dim t As Variant, i As Long
     t = Array( _
-        Array("Soberanos", 10), _
+        Array("Gobierno Central / Soberanos", 10), _
         Array("AAA", 7), _
         Array("AA+/AA", 6), _
         Array("AA-", 5), _
@@ -87,7 +87,7 @@ Private Sub CalcularRatingEnCalculo(wb As Workbook)
         If IsNumeric(wsB.Cells(i, 7).Value) Then monto = CDbl(wsB.Cells(i, 7).Value)
         Dim escala As String, nota As Double, locRat As String
         NotaRating rating, escala, nota, locRat
-        If escala <> "" And monto > 0 Then
+        If escala <> "" And monto > 0 And nota > 0 Then
             nDatos = nDatos + 1
             nemos(nDatos) = nemo
             rLoc(nDatos) = locRat
@@ -176,7 +176,7 @@ Private Sub CalcularRatingEnCalculo(wb As Workbook)
 End Sub
 
 '------------------------------------------------------------------
-' Rating LOCAL (de la Base) -> escala y nota
+' Rating LOCAL (de la Base) -> escala y nota. Gobierno Central = 10.
 Private Sub NotaRating(ByVal rating As String, ByRef escala As String, ByRef nota As Double, _
                        ByRef locRat As String)
     Dim s As String
@@ -184,6 +184,15 @@ Private Sub NotaRating(ByVal rating As String, ByRef escala As String, ByRef not
     escala = ""
     nota = 0
     locRat = ""
+
+    ' Bonos de gobierno (soberano) = nota maxima
+    If InStr(s, "GOBIERNO") > 0 Or InStr(s, "SOBERAN") > 0 Then
+        escala = "Largo"
+        nota = 10
+        locRat = "Soberanos"
+        Exit Sub
+    End If
+
     If Left(s, 3) = "CPL" Then
         escala = "Corto"
         Dim c As String
