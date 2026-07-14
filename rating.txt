@@ -16,27 +16,29 @@ Private Sub CrearHojaRating(wb As Workbook)
     ws.Range("A7").Value = "CPL 1-"
     ws.Range("B7").Value = 4
 
-    ws.Range("D3").Value = "LARGO PLAZO (local)"
-    ws.Range("D4").Value = "Rating local"
-    ws.Range("E4").Value = "Nota"
+    ws.Range("D3").Value = "LARGO PLAZO"
+    ws.Range("D4").Value = "Local"
+    ws.Range("E4").Value = "Internacional"
+    ws.Range("F4").Value = "Nota"
     Dim t As Variant, i As Long
     t = Array( _
-        Array("Gobierno Central / Soberanos", 10), _
-        Array("AAA", 7), _
-        Array("AA+/AA", 6), _
-        Array("AA-", 5), _
-        Array("A+", 4), _
-        Array("A/A-", 3), _
-        Array("BBB+/BBB", 2))
+        Array("Soberanos", "BBB-", 10), _
+        Array("AAA", "BB+", 7), _
+        Array("AA+/AA", "BB", 6), _
+        Array("AA-", "BB-", 5), _
+        Array("A+", "B+", 4), _
+        Array("A/A-", "B", 3), _
+        Array("BBB+/BBB", "B-", 2))
     For i = 0 To UBound(t)
         ws.Cells(5 + i, 4).Value = t(i)(0)
         ws.Cells(5 + i, 5).Value = t(i)(1)
+        ws.Cells(5 + i, 6).Value = t(i)(2)
     Next i
 
     FormatoHeadRating ws, "A3:B3"
     FormatoHeadRating ws, "A4:B4"
-    FormatoHeadRating ws, "D3:E3"
-    FormatoHeadRating ws, "D4:E4"
+    FormatoHeadRating ws, "D3:F3"
+    FormatoHeadRating ws, "D4:F4"
     ws.Columns("A:F").AutoFit
 End Sub
 
@@ -185,7 +187,6 @@ Private Sub NotaRating(ByVal rating As String, ByRef escala As String, ByRef not
     nota = 0
     locRat = ""
 
-    ' Bonos de gobierno (soberano) = nota maxima
     If InStr(s, "GOBIERNO") > 0 Or InStr(s, "SOBERAN") > 0 Then
         escala = "Largo"
         nota = 10
@@ -260,9 +261,10 @@ End Function
 
 '------------------------------------------------------------------
 Private Function EquivLargo(v As Double) As String
-    Dim notasArr As Variant, localesArr As Variant
+    Dim notasArr As Variant, localesArr As Variant, intArr As Variant
     notasArr = Array(10, 7, 6, 5, 4, 3, 2)
     localesArr = Array("Soberanos", "AAA", "AA+/AA", "AA-", "A+", "A/A-", "BBB+/BBB")
+    intArr = Array("BBB-", "BB+", "BB", "BB-", "B+", "B", "B-")
     Dim mejor As Long, dmin As Double, i As Long
     mejor = 0
     dmin = 1E+30
@@ -272,5 +274,5 @@ Private Function EquivLargo(v As Double) As String
             mejor = i
         End If
     Next i
-    EquivLargo = localesArr(mejor)
+    EquivLargo = localesArr(mejor) & " (" & intArr(mejor) & ")"
 End Function
